@@ -3,10 +3,12 @@
  */
 
 #import "OverlayView.h"
+#import <QuartzCore/QuartzCore.h>
 
 @interface OverlayView ()
 @property (nonatomic, strong) UIImageView *imageView;
 @property (nonatomic, strong) UILabel *placeholderLabel;
+@property (nonatomic, strong) CAShapeLayer *gridLayer;
 @end
 
 @implementation OverlayView
@@ -35,6 +37,7 @@
     _imageContentMode = UIViewContentModeScaleAspectFit;
     _flipHorizontal = NO;
     _flipVertical = NO;
+    _showsGrid = NO;
 
     self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.28];
     self.clipsToBounds = YES;
@@ -60,6 +63,13 @@
     _placeholderLabel.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.7];
     _placeholderLabel.userInteractionEnabled = NO;
     [self addSubview:_placeholderLabel];
+
+    _gridLayer = [CAShapeLayer layer];
+    _gridLayer.strokeColor = [UIColor colorWithWhite:1.0 alpha:0.35].CGColor;
+    _gridLayer.fillColor = [UIColor clearColor].CGColor;
+    _gridLayer.lineWidth = 1.0 / [UIScreen mainScreen].scale;
+    _gridLayer.hidden = YES;
+    [self.layer addSublayer:_gridLayer];
 
     [self updateAppearance];
 }
@@ -129,10 +139,38 @@
     [self applyFlip];
 }
 
+- (void)setShowsGrid:(BOOL)show {
+    _showsGrid = show;
+    _gridLayer.hidden = !show;
+    if (show) [self updateGrid];
+}
+
+- (void)updateGrid {
+    if (!_showsGrid) return;
+    CGRect b = self.bounds;
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    for (NSInteger i = 1; i <= 2; i++) {
+        CGFloat x = b.size.width * i / 3.0;
+        [path moveToPoint:CGPointMake(x, 0)];
+        [path addLineToPoint:CGPointMake(x, b.size.height)];
+        CGFloat y = b.size.height * i / 3.0;
+        [path moveToPoint:CGPointMake(0, y)];
+        [path addLineToPoint:CGPointMake(b.size.width, y)];
+    }
+    /* Center crosshair */
+    [path moveToPoint:CGPointMake(b.size.width * 0.5, 0)];
+    [path addLineToPoint:CGPointMake(b.size.width * 0.5, b.size.height)];
+    [path moveToPoint:CGPointMake(0, b.size.height * 0.5)];
+    [path addLineToPoint:CGPointMake(b.size.width, b.size.height * 0.5)];
+    _gridLayer.path = path.CGPath;
+    _gridLayer.frame = b;
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     _imageView.frame = self.bounds;
     _placeholderLabel.frame = self.bounds;
+    [self updateGrid];
 }
 
 @end

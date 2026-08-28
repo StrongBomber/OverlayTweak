@@ -12,6 +12,7 @@
 @property (nonatomic, assign) UIViewContentMode imageContentMode;
 @property (nonatomic, assign) BOOL flipHorizontal;
 @property (nonatomic, assign) BOOL flipVertical;
+@property (nonatomic, assign) BOOL showsGrid;
 
 - (instancetype)initWithFrame:(CGRect)frame image:(UIImage *)image;
 - (void)clearImage;

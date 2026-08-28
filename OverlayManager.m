@@ -15,6 +15,7 @@
 #import "OverlayCommon.h"
 #import "OverlayView.h"
 #import "SettingsViewController.h"
+#import <math.h>
 
 #pragma mark - Private interface (must be first so the window can call us)
 
@@ -46,6 +47,8 @@
 @property (nonatomic, assign) NSInteger sizeModeValue; /* 0 follow image, 1 custom */
 @property (nonatomic, assign) CGFloat customWidthValue;
 @property (nonatomic, assign) CGFloat customHeightValue;
+@property (nonatomic, assign) BOOL showsBorderValue;
+@property (nonatomic, assign) BOOL showsGridValue;
 @property (nonatomic, assign) BOOL menuHidden;
 
 @property (nonatomic, strong) NSUserDefaults *defaults;
@@ -120,6 +123,11 @@
         _currentRotationValue = 0.0;
         _currentPosition = CGPointZero;
         _contentModeIndexValue = 0;
+        _sizeModeValue = 0;
+        _customWidthValue = 240.0;
+        _customHeightValue = 240.0;
+        _showsBorderValue = YES;
+        _showsGridValue = NO;
         _isOverlayVisible = NO;
         _isLocked = NO;
         _isSettingsVisible = NO;
@@ -315,6 +323,8 @@
     view.imageContentMode = [self contentModeFromIndex:_contentModeIndexValue];
     view.flipHorizontal = _flipH;
     view.flipVertical = _flipV;
+    view.showsBorder = _showsBorderValue;
+    view.showsGrid = _showsGridValue;
 
     if (_currentPosition.x != 0 || _currentPosition.y != 0) {
         view.center = _currentPosition;
@@ -450,6 +460,10 @@
     dbl.numberOfTapsRequired = 2;
     [self.overlayContainer addGestureRecognizer:dbl];
 
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
+    lp.minimumPressDuration = 0.45;
+    [self.overlayContainer addGestureRecognizer:lp];
+
     self.panGesture.delegate = self;
     self.pinchGesture.delegate = self;
     self.rotationGesture.delegate = self;
@@ -509,6 +523,12 @@
     if (self.isLocked) return;
     [self resetTransform];
     [self showToast:@"Konum sıfırlandı"];
+}
+
+- (void)handleLongPress:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    [self toggleLock];
+    [self showToast:self.isLocked ? @"Kilitlendi — dokunmalar oyuna geçer" : @"Kilit açıldı"];
 }
 
 - (void)clampOverlayToScreen {
@@ -853,6 +873,62 @@
     [self scheduleSave];
 }
 
+- (void)nudgeBy:(CGPoint)delta {
+    if (!self.overlayContainer || self.isLocked) return;
+    CGPoint c = self.overlayContainer.center;
+    c.x += delta.x;
+    c.y += delta.y;
+    self.overlayContainer.center = c;
+    _currentPosition = c;
+    [self clampOverlayToScreen];
+    [self scheduleSave];
+}
+
+- (void)snapToAlignment:(NSInteger)alignment {
+    if (!self.overlayContainer) return;
+    CGRect b = self.overlayWindow.bounds;
+    CGPoint c = self.overlayContainer.center;
+    switch (alignment) {
+        case 1: c.x = 24.0 + self.overlayContainer.bounds.size.width * _currentScaleValue * 0.5; break;
+        case 2: c.x = b.size.width - 24.0 - self.overlayContainer.bounds.size.width * _currentScaleValue * 0.5; break;
+        case 3: c.y = 24.0 + self.overlayContainer.bounds.size.height * _currentScaleValue * 0.5; break;
+        case 4: c.y = b.size.height - 24.0 - self.overlayContainer.bounds.size.height * _currentScaleValue * 0.5; break;
+        default:
+            c = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
+            break;
+    }
+    self.overlayContainer.center = c;
+    _currentPosition = c;
+    [self clampOverlayToScreen];
+    [self scheduleSave];
+}
+
+- (void)rotateByDegrees:(CGFloat)degrees {
+    _currentRotationValue += degrees * (CGFloat)M_PI / 180.0;
+    [self applyContainerTransform];
+    [self scheduleSave];
+}
+
+- (void)setShowsBorder:(BOOL)show {
+    _showsBorderValue = show;
+    self.overlayView.showsBorder = show;
+    if (!show && self.isLocked) {
+        /* Keep the red lock cue even if the decorative border is off. */
+        [self.overlayView setLockedAppearance:YES];
+    }
+    [_defaults setBool:show forKey:kDefaultsShowsBorder];
+}
+
+- (BOOL)showsBorder { return _showsBorderValue; }
+
+- (void)setShowsGrid:(BOOL)show {
+    _showsGridValue = show;
+    self.overlayView.showsGrid = show;
+    [_defaults setBool:show forKey:kDefaultsShowsGrid];
+}
+
+- (BOOL)showsGrid { return _showsGridValue; }
+
 - (void)resetTransform {
     _currentScaleValue = 1.0;
     _currentRotationValue = 0.0;
@@ -877,6 +953,8 @@
     [_defaults setInteger:0 forKey:kDefaultsSizeMode];
     [_defaults setDouble:_customWidthValue forKey:kDefaultsCustomWidth];
     [_defaults setDouble:_customHeightValue forKey:kDefaultsCustomHeight];
+    [self setShowsBorder:YES];
+    [self setShowsGrid:NO];
     [self resetTransform];
     [self clearOverlayImage];
     [self setMenuHidden:NO];
@@ -933,6 +1011,12 @@
     CGFloat ch = [_defaults doubleForKey:kDefaultsCustomHeight];
     _customWidthValue = (cw >= 40.0) ? cw : 240.0;
     _customHeightValue = (ch >= 40.0) ? ch : 240.0;
+    if ([_defaults objectForKey:kDefaultsShowsBorder]) {
+        _showsBorderValue = [_defaults boolForKey:kDefaultsShowsBorder];
+    } else {
+        _showsBorderValue = YES;
+    }
+    _showsGridValue = [_defaults boolForKey:kDefaultsShowsGrid];
     _menuHidden = [_defaults boolForKey:kDefaultsMenuHidden];
 }
 

@@ -53,6 +53,15 @@
 - (CGSize)imageNativeSize;
 - (void)syncOverlaySizeAnimated:(BOOL)animated;
 
+- (void)nudgeBy:(CGPoint)delta;
+- (void)snapToAlignment:(NSInteger)alignment; /* 0 center, 1 left, 2 right, 3 top, 4 bottom */
+- (void)rotateByDegrees:(CGFloat)degrees;
+
+- (void)setShowsBorder:(BOOL)show;
+- (BOOL)showsBorder;
+- (void)setShowsGrid:(BOOL)show;
+- (BOOL)showsGrid;
+
 - (void)resetTransform;
 - (void)resetAllSettings;
 

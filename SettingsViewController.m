@@ -9,6 +9,7 @@
 #import "OverlayManager.h"
 #import "OverlayCommon.h"
 #import <PhotosUI/PhotosUI.h>
+#import <math.h>
 
 @interface SettingsViewController () <PHPickerViewControllerDelegate, UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIScrollView *scrollView;
@@ -24,6 +25,13 @@
 @property (nonatomic, strong) UILabel *lockLabel;
 @property (nonatomic, strong) UISwitch *lockSwitch;
 @property (nonatomic, strong) UISegmentedControl *modeControl;
+@property (nonatomic, strong) UISegmentedControl *sizeModeControl;
+@property (nonatomic, strong) UILabel *sizeInfoLabel;
+@property (nonatomic, strong) UIButton *customSizeButton;
+@property (nonatomic, strong) UISlider *rotationSlider;
+@property (nonatomic, strong) UILabel *rotationValueLabel;
+@property (nonatomic, strong) UISwitch *borderSwitch;
+@property (nonatomic, strong) UISwitch *gridSwitch;
 @property (nonatomic, strong) UIButton *toggleOverlayButton;
 @property (nonatomic, strong) UIButton *resetButton;
 @property (nonatomic, assign) BOOL uiBuilt;
@@ -214,7 +222,41 @@
     self.scaleValueLabel.textAlignment = NSTextAlignmentRight;
     [self.contentView addSubview:self.scaleValueLabel];
 
-    y += 42;
+    y += 40;
+    [self.contentView addSubview:[self sectionLabel:@"DÖNDÜRME" y:y]];
+    y += 26;
+
+    self.rotationSlider = [[UISlider alloc] initWithFrame:CGRectMake(p, y, sw - 55, 30)];
+    self.rotationSlider.minimumValue = -180.0f;
+    self.rotationSlider.maximumValue = 180.0f;
+    self.rotationSlider.value = 0;
+    self.rotationSlider.minimumTrackTintColor = [UIColor systemOrangeColor];
+    self.rotationSlider.maximumTrackTintColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2];
+    [self.rotationSlider addTarget:self action:@selector(rotationChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.contentView addSubview:self.rotationSlider];
+
+    self.rotationValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - p - 50, y, 50, 30)];
+    self.rotationValueLabel.text = @"0°";
+    self.rotationValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    self.rotationValueLabel.textColor = [UIColor whiteColor];
+    self.rotationValueLabel.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:self.rotationValueLabel];
+
+    y += 36;
+    UIButton *rotL = [self actionButton:@"↺  -90°"
+                                  frame:CGRectMake(p, y, (sw - 8) / 2, 36)
+                                  color:[[UIColor whiteColor] colorWithAlphaComponent:0.12]
+                             titleColor:[UIColor whiteColor]];
+    [rotL addTarget:self action:@selector(rotateLeftTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:rotL];
+    UIButton *rotR = [self actionButton:@"+90°  ↻"
+                                  frame:CGRectMake(p + (sw - 8) / 2 + 8, y, (sw - 8) / 2, 36)
+                                  color:[[UIColor whiteColor] colorWithAlphaComponent:0.12]
+                             titleColor:[UIColor whiteColor]];
+    [rotR addTarget:self action:@selector(rotateRightTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:rotR];
+
+    y += 48;
     [self.contentView addSubview:[self sectionLabel:@"SIĞDIRMA" y:y]];
     y += 26;
 
@@ -284,35 +326,85 @@
 
     y += 52;
     [self addSeparatorAtY:y];
+    y += 10;
+
+    [self.contentView addSubview:[self sectionLabel:@"GÖRÜNÜM" y:y]];
+    y += 26;
+
+    UIView *borderRow = [[UIView alloc] initWithFrame:CGRectMake(p, y, sw, 44)];
+    borderRow.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.05];
+    borderRow.layer.cornerRadius = 8;
+    [self.contentView addSubview:borderRow];
+    UILabel *borderLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, sw - 70, 44)];
+    borderLbl.text = @"Kenarlık";
+    borderLbl.font = [UIFont systemFontOfSize:15];
+    borderLbl.textColor = [UIColor whiteColor];
+    [borderRow addSubview:borderLbl];
+    self.borderSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(sw - 59, 7, 0, 0)];
+    self.borderSwitch.onTintColor = [UIColor systemBlueColor];
+    [self.borderSwitch addTarget:self action:@selector(borderChanged:) forControlEvents:UIControlEventValueChanged];
+    [borderRow addSubview:self.borderSwitch];
+
+    y += 52;
+    UIView *gridRow = [[UIView alloc] initWithFrame:CGRectMake(p, y, sw, 44)];
+    gridRow.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.05];
+    gridRow.layer.cornerRadius = 8;
+    [self.contentView addSubview:gridRow];
+    UILabel *gridLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, sw - 70, 44)];
+    gridLbl.text = @"Hizalama ızgarası";
+    gridLbl.font = [UIFont systemFontOfSize:15];
+    gridLbl.textColor = [UIColor whiteColor];
+    [gridRow addSubview:gridLbl];
+    self.gridSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(sw - 59, 7, 0, 0)];
+    self.gridSwitch.onTintColor = [UIColor systemBlueColor];
+    [self.gridSwitch addTarget:self action:@selector(gridChanged:) forControlEvents:UIControlEventValueChanged];
+    [gridRow addSubview:self.gridSwitch];
+
+    y += 56;
+    [self.contentView addSubview:[self sectionLabel:@"KONUM (1 pt / 10 pt)" y:y]];
+    y += 26;
+
+    CGFloat nw = (sw - 16) / 3.0;
+    NSArray *nudgeTitles = @[@"←10", @"↑10", @"→10", @"←1", @"↓10", @"→1"];
+    NSArray *nudgeTags = @[@701, @703, @702, @711, @704, @712];
+    for (NSInteger i = 0; i < 6; i++) {
+        NSInteger row = i / 3;
+        NSInteger col = i % 3;
+        UIButton *b = [self actionButton:nudgeTitles[i]
+                                  frame:CGRectMake(p + col * (nw + 8), y + row * 40, nw, 36)
+                                  color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                             titleColor:[UIColor whiteColor]];
+        b.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        b.tag = [nudgeTags[i] integerValue];
+        [b addTarget:self action:@selector(nudgeTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [self.contentView addSubview:b];
+    }
+
+    y += 88;
+    [self.contentView addSubview:[self sectionLabel:@"YAPIŞTIR" y:y]];
+    y += 26;
+    NSArray *snapTitles = @[@"Orta", @"Sol", @"Sağ", @"Üst", @"Alt"];
+    CGFloat sw5 = (sw - 16) / 5.0;
+    for (NSInteger i = 0; i < 5; i++) {
+        UIButton *b = [self actionButton:snapTitles[i]
+                                  frame:CGRectMake(p + i * (sw5 + 4), y, sw5, 32)
+                                  color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                             titleColor:[UIColor whiteColor]];
+        b.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
+        b.tag = 800 + i;
+        [b addTarget:self action:@selector(snapTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [self.contentView addSubview:b];
+    }
+
+    y += 44;
+    [self addSeparatorAtY:y];
     y += 16;
 
     self.toggleOverlayButton = [self actionButton:@"👁  Overlay Göster / Gizle"
                                             frame:CGRectMake(p, y, sw, 44)
                                             color:[UIColor systemBlueColor]
                                        titleColor:[UIColor whiteColor]];
-    [self.toggleOverlayButton addTarget:self action:@selector(toggleOverlayTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.contentView addSubview:self.toggleOverlayButton];
-
-    y += 52;
-    UIButton *hideMenu = [self actionButton:@"🫥  Menü Butonunu Gizle"
-                                      frame:CGRectMake(p, y, sw, 44)
-                                      color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
-                                 titleColor:[UIColor whiteColor]];
-    [hideMenu addTarget:self action:@selector(hideMenuTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.contentView addSubview:hideMenu];
-
-    y += 52;
-    UIButton *resetPos = [self actionButton:@"🎯  Konumu Ortala"
-                                      frame:CGRectMake(p, y, sw, 44)
-                                      color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
-                                 titleColor:[UIColor whiteColor]];
-    [resetPos addTarget:self action:@selector(resetPosTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.contentView addSubview:resetPos];
-
-    y += 56;
-    self.resetButton = [self actionButton:@"🔄  Tüm Ayarları Sıfırla"
-                                    frame:CGRectMake(p, y, sw, 44)
-                                    color:[[UIColor systemRedColor] colorWithAlphaComponent:0.14]
+    [self.toggleOverlayButton addTarget:self action:@selector(toggleOvert:0.14]
                                titleColor:[UIColor systemRedColor]];
     [self.resetButton addTarget:self action:@selector(resetTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:self.resetButton];
@@ -358,6 +450,13 @@
     self.modeControl.selectedSegmentIndex = [mgr contentModeIndex];
     self.imagePreview.image = [mgr currentImage];
     self.sizeModeControl.selectedSegmentIndex = [mgr sizeMode];
+    CGFloat deg = [mgr currentRotation] * 180.0 / M_PI;
+    while (deg > 180.0) deg -= 360.0;
+    while (deg < -180.0) deg += 360.0;
+    self.rotationSlider.value = (float)deg;
+    self.rotationValueLabel.text = [NSString stringWithFormat:@"%.0f°", deg];
+    self.borderSwitch.on = [mgr showsBorder];
+    self.gridSwitch.on = [mgr showsGrid];
     [self refreshSizeInfo];
 }
 
@@ -493,6 +592,68 @@
     self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", slider.value * 100.0];
 }
 
+- (void)opacityPresetTapped:(UIButton *)btn {
+    CGFloat values[] = {0.25, 0.50, 0.75, 1.00};
+    NSInteger i = btn.tag - 600;
+    if (i < 0 || i > 3) return;
+    CGFloat v = values[i];
+    [[OverlayManager sharedManager] setOpacity:v];
+    self.opacitySlider.value = (float)v;
+    self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", v * 100.0];
+}
+
+- (void)rotationChanged:(UISlider *)slider {
+    CGFloat rad = slider.value * (CGFloat)M_PI / 180.0;
+    [[OverlayManager sharedManager] setRotation:rad];
+    self.rotationValueLabel.text = [NSString stringWithFormat:@"%.0f°", slider.value];
+}
+
+- (void)rotateLeftTapped {
+    OverlayManager *mgr = [OverlayManager sharedManager];
+    [mgr rotateByDegrees:-90];
+    CGFloat deg = [mgr currentRotation] * 180.0 / M_PI;
+    while (deg > 180.0) deg -= 360.0;
+    while (deg < -180.0) deg += 360.0;
+    self.rotationSlider.value = (float)deg;
+    self.rotationValueLabel.text = [NSString stringWithFormat:@"%.0f°", deg];
+}
+
+- (void)rotateRightTapped {
+    OverlayManager *mgr = [OverlayManager sharedManager];
+    [mgr rotateByDegrees:90];
+    CGFloat deg = [mgr currentRotation] * 180.0 / M_PI;
+    while (deg > 180.0) deg -= 360.0;
+    while (deg < -180.0) deg += 360.0;
+    self.rotationSlider.value = (float)deg;
+    self.rotationValueLabel.text = [NSString stringWithFormat:@"%.0f°", deg];
+}
+
+- (void)borderChanged:(UISwitch *)sw {
+    [[OverlayManager sharedManager] setShowsBorder:sw.isOn];
+}
+
+- (void)gridChanged:(UISwitch *)sw {
+    [[OverlayManager sharedManager] setShowsGrid:sw.isOn];
+}
+
+- (void)nudgeTapped:(UIButton *)btn {
+    CGPoint d = CGPointZero;
+    switch (btn.tag) {
+        case 701: d = CGPointMake(-10, 0); break;
+        case 702: d = CGPointMake(10, 0); break;
+        case 703: d = CGPointMake(0, -10); break;
+        case 704: d = CGPointMake(0, 10); break;
+        case 711: d = CGPointMake(-1, 0); break;
+        case 712: d = CGPointMake(1, 0); break;
+        default: break;
+    }
+    [[OverlayManager sharedManager] nudgeBy:d];
+}
+
+- (void)snapTapped:(UIButton *)btn {
+    [[OverlayManager sharedManager] snapToAlignment:btn.tag - 800];
+}
+
 - (void)scaleChanged:(UISlider *)slider {
     [[OverlayManager sharedManager] setScale:slider.value];
     self.scaleValueLabel.text = [NSString stringWithFormat:@"%.1f×", slider.value];
@@ -530,6 +691,8 @@
     [[OverlayManager sharedManager] resetTransform];
     self.scaleSlider.value = 1.0f;
     self.scaleValueLabel.text = @"1.0×";
+    self.rotationSlider.value = 0;
+    self.rotationValueLabel.text = @"0°";
 }
 
 - (void)resetTapped {

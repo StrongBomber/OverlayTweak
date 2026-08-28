@@ -36,7 +36,7 @@ LDFLAGS = -isysroot "$(SDK)" \
           -framework QuartzCore \
           -install_name @executable_path/$(TARGET_NAME)
 
-.PHONY: all clean check-sdk
+.PHONY: all clean check-sdk check
 
 all: check-sdk
 	@echo "[CC/LD] arm64"
@@ -67,6 +67,9 @@ check-sdk:
 		exit 1; \
 	fi
 	@echo "[SDK] $(SDK)"
+
+check:
+	@python3 scripts/check_objc.py
 
 clean:
 	@rm -f $(SOURCES:.m=.o) $(TARGET_NAME) $(TARGET_NAME).arm64 $(TARGET_NAME).arm64e

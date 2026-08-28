@@ -1,38 +1,30 @@
 # ==============================================================================
 # OverlayTweak - Makefile
 # ==============================================================================
-# iOS dylib derleme dosyası.
-# macOS + Xcode Command Line Tools gerektirir.
+# Builds Overlay.dylib for device (iphoneos).
+# Requires macOS + Xcode. arm64 is required; arm64e is best-effort.
 # ==============================================================================
 
 TARGET_NAME = Overlay.dylib
+MIN_IOS     = 14.0
 
-# Mimari: arm64 (iPhone 5s+) ve arm64e (iPhone XS+)
-ARCHS = -arch arm64 -arch arm64e
-
-# iOS SDK yolu (Xcode'dan otomatik bulunur)
 SDK := $(shell xcrun --sdk iphoneos --show-sdk-path 2>/dev/null)
+CC   = xcrun -sdk iphoneos clang
 
-# Derleyici
-CC = xcrun -sdk iphoneos clang
+SOURCES = OverlayEntry.m OverlayManager.m OverlayView.m SettingsViewController.m
 
-# Minimum iOS sürümü
-MIN_IOS = 14.0
-
-# Derleme bayrakları
-CFLAGS = $(ARCHS) \
-         -isysroot $(SDK) \
+CFLAGS = -isysroot "$(SDK)" \
          -miphoneos-version-min=$(MIN_IOS) \
          -fobjc-arc \
-         -fmodules \
          -fvisibility=hidden \
          -O2 \
+         -g0 \
+         -I. \
          -Wno-deprecated-declarations \
-         -Wno-unused-variable
+         -Wno-unused-variable \
+         -Wno-objc-missing-super-calls
 
-# Linker bayrakları
-LDFLAGS = $(ARCHS) \
-          -isysroot $(SDK) \
+LDFLAGS = -isysroot "$(SDK)" \
           -miphoneos-version-min=$(MIN_IOS) \
           -dynamiclib \
           -lobjc \
@@ -42,52 +34,40 @@ LDFLAGS = $(ARCHS) \
           -framework PhotosUI \
           -framework CoreGraphics \
           -framework QuartzCore \
-          -install_name @rpath/$(TARGET_NAME)
-
-# Kaynak dosyalar
-SOURCES = OverlayEntry.m \
-          OverlayManager.m \
-          OverlayView.m \
-          SettingsViewController.m
-
-# Nesne dosyaları
-OBJECTS = $(SOURCES:.m=.o)
-
-# ==============================================================================
-# Kurallar
-# ==============================================================================
+          -install_name @executable_path/$(TARGET_NAME)
 
 .PHONY: all clean check-sdk
 
-# SDK kontrolü
+all: check-sdk
+	@echo "[CC/LD] arm64"
+	$(CC) $(CFLAGS) $(LDFLAGS) -arch arm64 -o $(TARGET_NAME).arm64 $(SOURCES)
+	@echo "[CC/LD] arm64e (optional)"
+	@if $(CC) $(CFLAGS) $(LDFLAGS) -arch arm64e -o $(TARGET_NAME).arm64e $(SOURCES); then \
+		echo "[LIPO] arm64 + arm64e"; \
+		lipo -create -output $(TARGET_NAME) $(TARGET_NAME).arm64 $(TARGET_NAME).arm64e; \
+	else \
+		echo "[WARN] arm64e failed — shipping arm64 only"; \
+		cp $(TARGET_NAME).arm64 $(TARGET_NAME); \
+	fi
+	@rm -f $(TARGET_NAME).arm64 $(TARGET_NAME).arm64e
+	@echo "[STRIP] $(TARGET_NAME)"
+	@xcrun -sdk iphoneos strip -x $(TARGET_NAME) 2>/dev/null || true
+	@echo ""
+	@echo "=========================================="
+	@echo "  Built: $(TARGET_NAME)"
+	@lipo -info $(TARGET_NAME) || true
+	@ls -lh $(TARGET_NAME)
+	@echo "=========================================="
+
 check-sdk:
 	@if [ -z "$(SDK)" ]; then \
-		echo "HATA: iOS SDK bulunamadı!"; \
-		echo "Xcode'u açın ve iOS SDK'yi indirin."; \
+		echo "ERROR: iOS SDK not found."; \
+		echo "Install Xcode and run: xcode-select --install"; \
+		echo "Then: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"; \
 		exit 1; \
 	fi
+	@echo "[SDK] $(SDK)"
 
-# Ana derleme kuralı
-all: check-sdk $(OBJECTS)
-	@echo ""
-	@echo "[LINK] $(TARGET_NAME)"
-	$(CC) $(LDFLAGS) -o $(TARGET_NAME) $(OBJECTS)
-	@echo "[STRIP] $(TARGET_NAME)"
-	xcrun -sdk iphoneos strip -x $(TARGET_NAME) 2>/dev/null || true
-	@echo ""
-	@echo "=========================================="
-	@echo "  Derleme başarılı: $(TARGET_NAME)"
-	@echo "=========================================="
-	@echo ""
-	@ls -lh $(TARGET_NAME)
-
-# .m -> .o derleme kuralı
-%.o: %.m
-	@echo "[CC] $<"
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Temizleme
 clean:
-	@echo "[CLEAN] Temizleniyor..."
-	@rm -f $(OBJECTS) $(TARGET_NAME)
-	@echo "[CLEAN] Tamamlandı."
+	@rm -f $(SOURCES:.m=.o) $(TARGET_NAME) $(TARGET_NAME).arm64 $(TARGET_NAME).arm64e
+	@echo "[CLEAN] done"

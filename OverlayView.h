@@ -1,7 +1,5 @@
 /**
- * ==============================================================================
- * OverlayView.h
- * ==============================================================================
+ * OverlayView.h — rasterized image overlay with border + flip.
  */
 
 #import <UIKit/UIKit.h>
@@ -11,10 +9,12 @@
 @property (nonatomic, strong) UIImage *image;
 @property (nonatomic, assign) CGFloat cornerRadius;
 @property (nonatomic, assign) BOOL showsBorder;
-@property (nonatomic, assign) BOOL showsShadow;
+@property (nonatomic, assign) UIViewContentMode imageContentMode;
+@property (nonatomic, assign) BOOL flipHorizontal;
+@property (nonatomic, assign) BOOL flipVertical;
 
 - (instancetype)initWithFrame:(CGRect)frame image:(UIImage *)image;
-- (void)setImage:(UIImage *)image;
 - (void)clearImage;
+- (void)setLockedAppearance:(BOOL)locked;
 
 @end

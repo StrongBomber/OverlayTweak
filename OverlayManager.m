@@ -1,87 +1,24 @@
 /**
- * ==============================================================================
  * OverlayManager.m
- * ==============================================================================
- * Kritik düzeltme: hitTest:withEvent: artık ayarlar panelini de kontrol ediyor.
- * ==============================================================================
+ *
+ * Fixes vs original:
+ *  - Window is attached to the active UIWindowScene (required on iOS 13+).
+ *  - Does not steal the game's key window (no makeKeyAndVisible on setup).
+ *  - hitTest lets presented modals (PHPicker / alerts) receive touches.
+ *  - Settings is a child of a real root view controller.
+ *  - Images stored as JPEG on disk, not PNG in NSUserDefaults (lag).
+ *  - Slider/gesture persistence is debounced.
+ *  - OverlayView is actually used; rasterized to cut overdraw.
  */
 
 #import "OverlayManager.h"
+#import "OverlayCommon.h"
+#import "OverlayView.h"
 #import "SettingsViewController.h"
 
-#define OLLog(fmt, ...) NSLog(@"[Overlay] " fmt, ##__VA_ARGS__)
+#pragma mark - Private interface (must be first so the window can call us)
 
-NSString *const kDefaultsOpacity = @"overlay_opacity";
-NSString *const kDefaultsPositionX = @"overlay_position_x";
-NSString *const kDefaultsPositionY = @"overlay_position_y";
-NSString *const kDefaultsScale = @"overlay_scale";
-NSString *const kDefaultsRotation = @"overlay_rotation";
-NSString *const kDefaultsImageBookmark = @"overlay_image_data";
-NSString *const kDefaultsIsLocked = @"overlay_is_locked";
-NSString *const kDefaultsOverlayVisible = @"overlay_visible";
-
-// ============================================================================
-// Kritik: Doğru hitTest implementasyonu
-// ============================================================================
-// Sorun: Eski kod sadece overlayContainer ve menü butonunu kontrol ediyordu.
-//        Ayarlar paneli (settingsContainerView) hiç kontrol edilmiyordu,
-//        bu yüzden paneldeki hiçbir buton çalışmıyordu.
-//
-// Çözüm: hitTest'te 3 durumu kontrol et:
-//   1. Ayarlar paneli açıksa -> panel'e dokunmaları geçir
-//   2. Menü butonuna dokunulduysa -> butona geçir
-//   3. Overlay container'a dokunulduysa (kilitli değilse) -> container'a geçir
-//   4. Diğer -> nil (oyuna geçir)
-// ============================================================================
-
-@interface OverlayPassthroughWindow : UIWindow
-@end
-
-@implementation OverlayPassthroughWindow
-
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    OverlayManager *mgr = [OverlayManager sharedManager];
-
-    // Overlay hiç görünür değilse, tüm dokunmaları geçir
-    if (!mgr.isOverlayVisible && !mgr.isSettingsVisible) {
-        return nil;
-    }
-
-    // KRİTİK: Ayarlar paneli açıksa, panel'e dokunmaları geçir
-    if (mgr.isSettingsVisible && mgr.settingsContainerView) {
-        CGPoint p = [self convertPoint:point toView:mgr.settingsContainerView];
-        if ([mgr.settingsContainerView pointInside:p withEvent:event]) {
-            return [mgr.settingsContainerView hitTest:p withEvent:event];
-        }
-    }
-
-    // Menü butonu (her zaman dokunulabilir)
-    if (mgr.menuButton) {
-        CGPoint p = [self convertPoint:point toView:mgr.menuButton];
-        if ([mgr.menuButton pointInside:p withEvent:event]) {
-            return [mgr.menuButton hitTest:p withEvent:event];
-        }
-    }
-
-    // Overlay container (kilitli değilse)
-    if (mgr.overlayContainer && !mgr.isLocked) {
-        CGPoint p = [self convertPoint:point toView:mgr.overlayContainer];
-        if ([mgr.overlayContainer pointInside:p withEvent:event]) {
-            return [mgr.overlayContainer hitTest:p withEvent:event];
-        }
-    }
-
-    // Hiçbir overlay elemanına dokunulmuyor -> oyuna geçir
-    return nil;
-}
-
-@end
-
-// ============================================================================
-// OverlayManager
-// ============================================================================
-
-@interface OverlayManager ()
+@interface OverlayManager () <UIGestureRecognizerDelegate>
 
 @property (nonatomic, strong, readwrite) UIWindow *overlayWindow;
 @property (nonatomic, strong, readwrite) UIView *overlayContainer;
@@ -89,8 +26,9 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
 @property (nonatomic, assign, readwrite) BOOL isLocked;
 @property (nonatomic, assign, readwrite) BOOL isSettingsVisible;
 
-@property (nonatomic, strong) UIImageView *overlayImageView;
+@property (nonatomic, strong) OverlayView *overlayView;
 @property (nonatomic, strong) UIButton *menuButton;
+@property (nonatomic, strong) UIButton *edgeTab;
 @property (nonatomic, strong) UIView *settingsContainerView;
 @property (nonatomic, strong) SettingsViewController *settingsVC;
 
@@ -98,22 +36,71 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
 @property (nonatomic, strong) UIPinchGestureRecognizer *pinchGesture;
 @property (nonatomic, strong) UIRotationGestureRecognizer *rotationGesture;
 
-@property (nonatomic, assign) CGFloat currentOpacity;
-@property (nonatomic, assign) CGFloat currentScale;
-@property (nonatomic, assign) CGFloat currentRotation;
+@property (nonatomic, assign) CGFloat currentOpacityValue;
+@property (nonatomic, assign) CGFloat currentScaleValue;
+@property (nonatomic, assign) CGFloat currentRotationValue;
 @property (nonatomic, assign) CGPoint currentPosition;
+@property (nonatomic, assign) BOOL flipH;
+@property (nonatomic, assign) BOOL flipV;
+@property (nonatomic, assign) NSInteger contentModeIndexValue;
+@property (nonatomic, assign) BOOL menuHidden;
 
 @property (nonatomic, strong) NSUserDefaults *defaults;
 @property (nonatomic, assign) BOOL setupCompleted;
+@property (nonatomic, assign) NSInteger setupAttempts;
+@property (nonatomic, weak) UIWindow *previousKeyWindow;
+@property (nonatomic, strong) UIView *toastView;
+
+- (UIView *)hitTestOverlayPoint:(CGPoint)point event:(UIEvent *)event;
 
 @end
 
+#pragma mark - Passthrough window
+
+@interface OverlayPassthroughWindow : UIWindow
+@end
+
+@implementation OverlayPassthroughWindow
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    /* Presented picker/alert must receive touches via default delivery. */
+    if (self.rootViewController.presentedViewController) {
+        return [super hitTest:point withEvent:event];
+    }
+    return [[OverlayManager sharedManager] hitTestOverlayPoint:point event:event];
+}
+
+@end
+
+#pragma mark - Root VC (needed so we can present modals)
+
+@interface OverlayRootViewController : UIViewController
+@end
+
+@implementation OverlayRootViewController
+
+- (void)loadView {
+    UIView *v = [[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    v.backgroundColor = [UIColor clearColor];
+    v.opaque = NO;
+    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.view = v;
+}
+
+- (BOOL)prefersStatusBarHidden { return NO; }
+- (BOOL)shouldAutorotate { return YES; }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskAll;
+}
+
+@end
+
+#pragma mark - OverlayManager
+
 @implementation OverlayManager
 
-#pragma mark - Singleton
-
 + (instancetype)sharedManager {
-    static OverlayManager *instance = nil;
+    static OverlayManager *instance;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         instance = [[OverlayManager alloc] init];
@@ -125,14 +112,16 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
     self = [super init];
     if (self) {
         _defaults = [NSUserDefaults standardUserDefaults];
-        _currentOpacity = 0.5;
-        _currentScale = 1.0;
-        _currentRotation = 0.0;
+        _currentOpacityValue = 0.5;
+        _currentScaleValue = 1.0;
+        _currentRotationValue = 0.0;
         _currentPosition = CGPointZero;
+        _contentModeIndexValue = 0;
         _isOverlayVisible = NO;
         _isLocked = NO;
         _isSettingsVisible = NO;
         _setupCompleted = NO;
+        _setupAttempts = 0;
     }
     return self;
 }
@@ -144,177 +133,302 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
         dispatch_async(dispatch_get_main_queue(), ^{ [self setup]; });
         return;
     }
-    if (_setupCompleted) {
-        OLLog(@"Setup zaten tamamlandı.");
+    if (_setupCompleted) return;
+
+    if (![self activeWindowScene] && ![self findHostWindow]) {
+        if (_setupAttempts++ < 20) {
+            NSTimeInterval delay = MIN(0.3 * _setupAttempts, 2.0);
+            OLLog(@"No window/scene yet, retry %ld in %.1fs", (long)_setupAttempts, delay);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ [self setup]; });
+        } else {
+            OLLog(@"Gave up finding a window for now; will retry on become-active.");
+            _setupAttempts = 0;
+        }
         return;
     }
 
-    OLLog(@"Setup başlıyor...");
-
+    OLLog(@"Setup starting…");
     [self loadSavedState];
-
-    UIWindow *keyWindow = [self findActiveWindow];
-    if (!keyWindow) {
-        OLLog(@"Pencere bulunamadı, 2sn sonra tekrar...");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{ [self setup]; });
+    [self createOverlayWindow];
+    if (!self.overlayWindow) {
+        OLLog(@"Failed to create overlay window.");
         return;
     }
-    OLLog(@"Window Found: %@", keyWindow);
-
-    [self createOverlayWindow];
     [self createOverlayContainer];
     [self createMenuButton];
+    [self createEdgeTab];
     [self setupGestures];
     [self loadSavedImage];
+    [self installObservers];
 
     _setupCompleted = YES;
-    OLLog(@"Overlay Created!");
+    OLLog(@"Overlay created.");
 
-    [self showOverlay];
+    BOOL visible = YES;
+    if ([_defaults objectForKey:kDefaultsOverlayVisible]) {
+        visible = [_defaults boolForKey:kDefaultsOverlayVisible];
+    }
+    if (visible) {
+        [self showOverlay];
+    } else {
+        self.overlayContainer.hidden = YES;
+        self.isOverlayVisible = NO;
+    }
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [self showTestAlert]; });
+    if (self.menuHidden) {
+        self.menuButton.hidden = YES;
+        self.edgeTab.hidden = NO;
+    }
+
+    if (![_defaults boolForKey:kDefaultsWelcomeShown]) {
+        [self showToast:@"Overlay hazır — ⚙️ menü"];
+        [_defaults setBool:YES forKey:kDefaultsWelcomeShown];
+    }
 }
 
-#pragma mark - Pencere Bulma
-
-- (UIWindow *)findActiveWindow {
-    // Yöntem 1: UIWindowScene keyWindow (iOS 13+)
+- (void)installObservers {
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(appBackgrounded)
+               name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [nc addObserver:self selector:@selector(handleGeometryChange)
+               name:UIApplicationDidChangeStatusBarOrientationNotification object:nil];
     if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]] &&
-                scene.activationState == UISceneActivationStateForegroundActive) {
-                for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-                    if (w.isKeyWindow) return w;
-                }
-            }
-        }
+        [nc addObserver:self selector:@selector(handleGeometryChange)
+                   name:UISceneDidActivateNotification object:nil];
     }
+}
 
-    // Yöntem 2: UIApplication keyWindow
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    if (w) return w;
-#pragma clang diagnostic pop
+- (void)appBackgrounded {
+    [self saveCurrentState];
+}
 
-    // Yöntem 3: İlk visible window
+- (void)handleGeometryChange {
+    if (!self.overlayWindow) return;
     if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                for (UIWindow *w2 in ((UIWindowScene *)scene).windows) {
-                    if (!w2.isHidden && w2.alpha > 0) return w2;
-                }
+        UIWindowScene *scene = [self activeWindowScene];
+        if (scene) {
+            if (self.overlayWindow.windowScene != scene) {
+                self.overlayWindow.windowScene = scene;
             }
+            self.overlayWindow.frame = scene.coordinateSpace.bounds;
         }
+    } else {
+        self.overlayWindow.frame = [UIScreen mainScreen].bounds;
     }
+    [self clampOverlayToScreen];
+    [self clampMenuToScreen];
+}
 
-    // Yöntem 4: AppDelegate window
-    id delegate = [UIApplication sharedApplication].delegate;
-    if ([delegate respondsToSelector:@selector(window)]) {
-        w = [delegate performSelector:@selector(window)];
-        if (w) return w;
+#pragma mark - Windows / scenes
+
+- (UIWindowScene *)activeWindowScene {
+    if (@available(iOS 13.0, *)) {
+        UIWindowScene *fallback = nil;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            UIWindowScene *ws = (UIWindowScene *)scene;
+            if (ws.activationState == UISceneActivationStateForegroundActive) return ws;
+            if (!fallback) fallback = ws;
+        }
+        return fallback;
     }
-
     return nil;
 }
 
-#pragma mark - Overlay Penceresi
+- (UIWindow *)findHostWindow {
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                if (w == self.overlayWindow || w.hidden || w.alpha <= 0) continue;
+                if (w.isKeyWindow) return w;
+            }
+        }
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                if (w == self.overlayWindow || w.hidden) continue;
+                return w;
+            }
+        }
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    UIWindow *key = [UIApplication sharedApplication].keyWindow;
+#pragma clang diagnostic pop
+    if (key && key != self.overlayWindow) return key;
+
+    id delegate = [UIApplication sharedApplication].delegate;
+    if ([delegate respondsToSelector:@selector(window)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        UIWindow *w = [delegate performSelector:@selector(window)];
+#pragma clang diagnostic pop
+        if (w && w != self.overlayWindow) return w;
+    }
+    return nil;
+}
 
 - (void)createOverlayWindow {
     CGRect bounds = [UIScreen mainScreen].bounds;
+    OverlayPassthroughWindow *win = nil;
 
-    self.overlayWindow = [[OverlayPassthroughWindow alloc] initWithFrame:bounds];
-    self.overlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
-    self.overlayWindow.backgroundColor = [UIColor clearColor];
-    self.overlayWindow.userInteractionEnabled = YES;
-    self.overlayWindow.hidden = NO;
-
-    [self.overlayWindow makeKeyAndVisible];
-
-    // Ana pencereyi tekrar key yap
-    UIWindow *keyWindow = [self findActiveWindow];
-    if (keyWindow && keyWindow != self.overlayWindow) {
-        [keyWindow makeKeyWindow];
+    if (@available(iOS 13.0, *)) {
+        UIWindowScene *scene = [self activeWindowScene];
+        if (scene) {
+            win = [[OverlayPassthroughWindow alloc] initWithWindowScene:scene];
+            bounds = scene.coordinateSpace.bounds;
+            win.frame = bounds;
+            OLLog(@"Attached to scene %@", scene);
+        }
+    }
+    if (!win) {
+        win = [[OverlayPassthroughWindow alloc] initWithFrame:bounds];
     }
 
-    OLLog(@"Overlay penceresi oluşturuldu.");
+    win.windowLevel = UIWindowLevelStatusBar + 100;
+    win.backgroundColor = [UIColor clearColor];
+    win.opaque = NO;
+    win.userInteractionEnabled = YES;
+    OverlayRootViewController *root = [OverlayRootViewController new];
+    win.rootViewController = root;
+    win.hidden = NO; /* do NOT makeKeyAndVisible — that pauses games */
+
+    self.overlayWindow = win;
+    OLLog(@"Overlay window ready (level %.0f)", win.windowLevel);
 }
 
-#pragma mark - Overlay Container
+#pragma mark - Overlay container
 
 - (void)createOverlayContainer {
-    CGRect bounds = [UIScreen mainScreen].bounds;
-    CGFloat w = bounds.size.width * 0.6;
-    CGFloat h = bounds.size.height * 0.4;
+    CGRect bounds = self.overlayWindow.bounds;
+    CGFloat w = MAX(160.0, bounds.size.width * 0.55);
+    CGFloat h = MAX(110.0, bounds.size.height * 0.32);
 
-    self.overlayContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
-    self.overlayContainer.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.3];
-    self.overlayContainer.clipsToBounds = YES;
-    self.overlayContainer.layer.cornerRadius = 8.0;
-    self.overlayContainer.layer.borderWidth = 2.0;
-    self.overlayContainer.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.5].CGColor;
-
-    self.overlayImageView = [[UIImageView alloc] initWithFrame:self.overlayContainer.bounds];
-    self.overlayImageView.contentMode = UIViewContentModeScaleAspectFit;
-    self.overlayImageView.backgroundColor = [UIColor clearColor];
-    self.overlayImageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.overlayContainer addSubview:self.overlayImageView];
+    OverlayView *view = [[OverlayView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
+    view.imageContentMode = [self contentModeFromIndex:_contentModeIndexValue];
+    view.flipHorizontal = _flipH;
+    view.flipVertical = _flipV;
 
     if (_currentPosition.x != 0 || _currentPosition.y != 0) {
-        self.overlayContainer.center = _currentPosition;
+        view.center = _currentPosition;
     } else {
-        self.overlayContainer.center = CGPointMake(bounds.size.width / 2, bounds.size.height / 2);
+        view.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+        _currentPosition = view.center;
     }
 
-    self.overlayContainer.transform = CGAffineTransformConcat(
-        CGAffineTransformMakeScale(_currentScale, _currentScale),
-        CGAffineTransformMakeRotation(_currentRotation)
-    );
-    self.overlayContainer.alpha = _currentOpacity;
-    self.overlayContainer.hidden = YES;
+    view.transform = CGAffineTransformConcat(
+        CGAffineTransformMakeScale(_currentScaleValue, _currentScaleValue),
+        CGAffineTransformMakeRotation(_currentRotationValue));
+    view.alpha = _currentOpacityValue;
+    view.hidden = YES;
+    [view setLockedAppearance:_isLocked];
 
-    [self.overlayWindow addSubview:self.overlayContainer];
-    OLLog(@"Overlay container oluşturuldu.");
+    [self.overlayWindow.rootViewController.view addSubview:view];
+    self.overlayView = view;
+    self.overlayContainer = view;
+    [self clampOverlayToScreen];
 }
 
-#pragma mark - Mini Menü
+#pragma mark - Menu
 
 - (void)createMenuButton {
-    CGFloat size = 50;
-    CGFloat margin = 12;
-
-    self.menuButton = [[UIButton alloc] initWithFrame:CGRectMake(
-        [UIScreen mainScreen].bounds.size.width - size - margin, 60, size, size)];
-    self.menuButton.tag = 9999;
+    CGFloat size = 48.0;
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.frame = CGRectMake(0, 0, size, size);
+    btn.accessibilityLabel = @"Overlay menü";
 
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
-    blurView.frame = self.menuButton.bounds;
+    blurView.frame = btn.bounds;
     blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    blurView.layer.cornerRadius = size / 2;
+    blurView.userInteractionEnabled = NO;
+    blurView.layer.cornerRadius = size / 2.0;
     blurView.clipsToBounds = YES;
-    [self.menuButton insertSubview:blurView atIndex:0];
+    [btn insertSubview:blurView atIndex:0];
 
-    [self.menuButton setTitle:@"⚙️" forState:UIControlStateNormal];
-    self.menuButton.titleLabel.font = [UIFont systemFontOfSize:24];
+    [btn setTitle:@"⚙️" forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:22];
+    btn.layer.cornerRadius = size / 2.0;
 
-    self.menuButton.layer.shadowColor = [UIColor blackColor].CGColor;
-    self.menuButton.layer.shadowOffset = CGSizeMake(0, 2);
-    self.menuButton.layer.shadowRadius = 6;
-    self.menuButton.layer.shadowOpacity = 0.6;
-
-    [self.menuButton addTarget:self action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
-
+    [btn addTarget:self action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(menuDragged:)];
-    [self.menuButton addGestureRecognizer:pan];
+    [btn addGestureRecognizer:pan];
 
-    [self.overlayWindow addSubview:self.menuButton];
-    OLLog(@"Menü butonu oluşturuldu.");
+    [self.overlayWindow.rootViewController.view addSubview:btn];
+    self.menuButton = btn;
+
+    CGRect b = self.overlayWindow.bounds;
+    UIEdgeInsets inset = self.overlayWindow.safeAreaInsets;
+    CGFloat x = [_defaults doubleForKey:kDefaultsMenuX];
+    CGFloat y = [_defaults doubleForKey:kDefaultsMenuY];
+    if (x <= 0 || y <= 0) {
+        x = b.size.width - size / 2.0 - 14.0 - inset.right;
+        y = inset.top + 36.0 + size / 2.0;
+    }
+    btn.center = CGPointMake(x, y);
+    [self clampMenuToScreen];
 }
 
-#pragma mark - Gesture'lar
+- (void)createEdgeTab {
+    UIButton *tab = [UIButton buttonWithType:UIButtonTypeCustom];
+    tab.frame = CGRectMake(0, 0, 22, 44);
+    tab.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.45];
+    tab.layer.cornerRadius = 8;
+    tab.layer.maskedCorners = kCALayerMaxXMinYCorner | kCALayerMaxXMaxYCorner;
+    [tab setTitle:@"⚙" forState:UIControlStateNormal];
+    tab.titleLabel.font = [UIFont systemFontOfSize:12];
+    tab.hidden = YES;
+    [tab addTarget:self action:@selector(edgeTabTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.overlayWindow.rootViewController.view addSubview:tab];
+    self.edgeTab = tab;
+    [self positionEdgeTab];
+}
+
+- (void)positionEdgeTab {
+    if (!self.edgeTab) return;
+    CGRect b = self.overlayWindow.bounds;
+    UIEdgeInsets inset = self.overlayWindow.safeAreaInsets;
+    self.edgeTab.center = CGPointMake(11 + inset.left, inset.top + 80);
+    if (self.edgeTab.center.y > b.size.height) {
+        self.edgeTab.center = CGPointMake(11 + inset.left, b.size.height * 0.3);
+    }
+}
+
+- (void)menuTapped {
+    if (self.isSettingsVisible) [self hideSettingsPanel];
+    else [self showSettingsPanel];
+}
+
+- (void)edgeTabTapped {
+    [self setMenuHidden:NO];
+    [self showSettingsPanel];
+}
+
+- (void)menuDragged:(UIPanGestureRecognizer *)g {
+    CGPoint t = [g translationInView:self.overlayWindow];
+    CGPoint c = CGPointMake(g.view.center.x + t.x, g.view.center.y + t.y);
+    g.view.center = c;
+    [g setTranslation:CGPointZero inView:self.overlayWindow];
+    [self clampMenuToScreen];
+    if (g.state == UIGestureRecognizerStateEnded) {
+        [_defaults setDouble:self.menuButton.center.x forKey:kDefaultsMenuX];
+        [_defaults setDouble:self.menuButton.center.y forKey:kDefaultsMenuY];
+    }
+}
+
+- (void)setMenuHidden:(BOOL)hidden {
+    _menuHidden = hidden;
+    self.menuButton.hidden = hidden;
+    self.edgeTab.hidden = !hidden;
+    [_defaults setBool:hidden forKey:kDefaultsMenuHidden];
+    if (hidden) [self showToast:@"Menü gizlendi — kenar ⚙"];
+}
+
+- (BOOL)isMenuHidden { return _menuHidden; }
+
+#pragma mark - Gestures
 
 - (void)setupGestures {
     self.panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
@@ -327,77 +441,133 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
     self.rotationGesture = [[UIRotationGestureRecognizer alloc] initWithTarget:self action:@selector(handleRotation:)];
     [self.overlayContainer addGestureRecognizer:self.rotationGesture];
 
-    self.panGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-    self.pinchGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-    self.rotationGesture.delegate = (id<UIGestureRecognizerDelegate>)self;
+    UITapGestureRecognizer *dbl = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleDoubleTap:)];
+    dbl.numberOfTapsRequired = 2;
+    [self.overlayContainer addGestureRecognizer:dbl];
+
+    self.panGesture.delegate = self;
+    self.pinchGesture.delegate = self;
+    self.rotationGesture.delegate = self;
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b {
     return YES;
 }
 
-#pragma mark - Gesture İşleyicileri
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t {
+    if (g.view == self.settingsContainerView) {
+        return t.view == self.settingsContainerView;
+    }
+    return YES;
+}
+
+- (void)applyContainerTransform {
+    self.overlayContainer.transform = CGAffineTransformConcat(
+        CGAffineTransformMakeScale(_currentScaleValue, _currentScaleValue),
+        CGAffineTransformMakeRotation(_currentRotationValue));
+}
 
 - (void)handlePan:(UIPanGestureRecognizer *)g {
     if (self.isLocked) return;
     UIView *v = g.view;
     CGPoint t = [g translationInView:v.superview];
-    CGPoint c = CGPointMake(v.center.x + t.x, v.center.y + t.y);
-    CGSize s = [UIScreen mainScreen].bounds.size;
-    CGFloat hw = v.bounds.size.width * _currentScale / 2;
-    CGFloat hh = v.bounds.size.height * _currentScale / 2;
-    c.x = MAX(hw, MIN(s.width - hw, c.x));
-    c.y = MAX(hh, MIN(s.height - hh, c.y));
-    v.center = c;
+    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [g setTranslation:CGPointZero inView:v.superview];
-    _currentPosition = c;
+    _currentPosition = v.center;
+    if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
+        [self clampOverlayToScreen];
+        [self scheduleSave];
+    }
 }
 
 - (void)handlePinch:(UIPinchGestureRecognizer *)g {
     if (self.isLocked) return;
     if (g.state == UIGestureRecognizerStateChanged) {
-        _currentScale = MAX(0.2, MIN(5.0, _currentScale * g.scale));
-        self.overlayContainer.transform = CGAffineTransformConcat(
-            CGAffineTransformMakeScale(_currentScale, _currentScale),
-            CGAffineTransformMakeRotation(_currentRotation));
+        _currentScaleValue = MAX(0.15, MIN(6.0, _currentScaleValue * g.scale));
+        [self applyContainerTransform];
         g.scale = 1.0;
     }
-    if (g.state == UIGestureRecognizerStateEnded) [self saveCurrentState];
+    if (g.state == UIGestureRecognizerStateEnded) [self scheduleSave];
 }
 
 - (void)handleRotation:(UIRotationGestureRecognizer *)g {
     if (self.isLocked) return;
     if (g.state == UIGestureRecognizerStateChanged) {
-        _currentRotation += g.rotation;
-        self.overlayContainer.transform = CGAffineTransformConcat(
-            CGAffineTransformMakeScale(_currentScale, _currentScale),
-            CGAffineTransformMakeRotation(_currentRotation));
+        _currentRotationValue += g.rotation;
+        [self applyContainerTransform];
         g.rotation = 0;
     }
-    if (g.state == UIGestureRecognizerStateEnded) [self saveCurrentState];
+    if (g.state == UIGestureRecognizerStateEnded) [self scheduleSave];
 }
 
-#pragma mark - Menü
+- (void)handleDoubleTap:(UITapGestureRecognizer *)g {
+    if (self.isLocked) return;
+    [self resetTransform];
+    [self showToast:@"Konum sıfırlandı"];
+}
 
-- (void)menuTapped {
-    if (self.isSettingsVisible) {
-        [self hideSettingsPanel];
-    } else {
-        [self showSettingsPanel];
+- (void)clampOverlayToScreen {
+    if (!self.overlayContainer) return;
+    CGSize s = self.overlayWindow.bounds.size;
+    CGPoint c = self.overlayContainer.center;
+    c.x = MAX(24, MIN(s.width - 24, c.x));
+    c.y = MAX(24, MIN(s.height - 24, c.y));
+    self.overlayContainer.center = c;
+    _currentPosition = c;
+}
+
+- (void)clampMenuToScreen {
+    if (!self.menuButton) return;
+    CGSize s = self.overlayWindow.bounds.size;
+    CGPoint c = self.menuButton.center;
+    UIEdgeInsets inset = self.overlayWindow.safeAreaInsets;
+    c.x = MAX(24 + inset.left, MIN(s.width - 24 - inset.right, c.x));
+    c.y = MAX(24 + inset.top, MIN(s.height - 24 - inset.bottom, c.y));
+    self.menuButton.center = c;
+}
+
+#pragma mark - Hit testing
+
+- (UIView *)hitTestOverlayPoint:(CGPoint)point event:(UIEvent *)event {
+    UIWindow *win = self.overlayWindow;
+    if (!win) return nil;
+
+    if (!self.isOverlayVisible && !self.isSettingsVisible && self.menuButton.hidden && self.edgeTab.hidden) {
+        return nil;
     }
+
+    if (self.menuButton && !self.menuButton.hidden) {
+        CGPoint p = [win convertPoint:point toView:self.menuButton];
+        if ([self.menuButton pointInside:p withEvent:event]) {
+            return [self.menuButton hitTest:p withEvent:event];
+        }
+    }
+
+    if (self.edgeTab && !self.edgeTab.hidden) {
+        CGPoint p = [win convertPoint:point toView:self.edgeTab];
+        if ([self.edgeTab pointInside:p withEvent:event]) {
+            return [self.edgeTab hitTest:p withEvent:event];
+        }
+    }
+
+    if (self.isSettingsVisible && self.settingsContainerView) {
+        CGPoint p = [win convertPoint:point toView:self.settingsContainerView];
+        if ([self.settingsContainerView pointInside:p withEvent:event]) {
+            return [self.settingsContainerView hitTest:p withEvent:event];
+        }
+    }
+
+    if (self.overlayContainer && self.isOverlayVisible && !self.isLocked && !self.overlayContainer.hidden) {
+        CGPoint p = [win convertPoint:point toView:self.overlayContainer];
+        if ([self.overlayContainer pointInside:p withEvent:event]) {
+            return [self.overlayContainer hitTest:p withEvent:event];
+        }
+    }
+
+    return nil;
 }
 
-- (void)menuDragged:(UIPanGestureRecognizer *)g {
-    CGPoint t = [g translationInView:self.overlayWindow];
-    CGPoint c = CGPointMake(g.view.center.x + t.x, g.view.center.y + t.y);
-    CGSize s = [UIScreen mainScreen].bounds.size;
-    c.x = MAX(25, MIN(s.width - 25, c.x));
-    c.y = MAX(25, MIN(s.height - 25, c.y));
-    g.view.center = c;
-    [g setTranslation:CGPointZero inView:self.overlayWindow];
-}
-
-#pragma mark - Görünürlük
+#pragma mark - Visibility
 
 - (void)showOverlay {
     if (![NSThread isMainThread]) {
@@ -406,12 +576,11 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
     }
     self.overlayContainer.hidden = NO;
     self.overlayContainer.alpha = 0;
-    [UIView animateWithDuration:0.3 animations:^{
-        self.overlayContainer.alpha = self.currentOpacity;
+    [UIView animateWithDuration:0.2 animations:^{
+        self.overlayContainer.alpha = self.currentOpacityValue;
     }];
     self.isOverlayVisible = YES;
     [_defaults setBool:YES forKey:kDefaultsOverlayVisible];
-    OLLog(@"Overlay gösterildi.");
 }
 
 - (void)hideOverlay {
@@ -419,97 +588,233 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
         dispatch_async(dispatch_get_main_queue(), ^{ [self hideOverlay]; });
         return;
     }
-    [UIView animateWithDuration:0.3 animations:^{
+    [UIView animateWithDuration:0.2 animations:^{
         self.overlayContainer.alpha = 0;
     } completion:^(BOOL f) {
-        self.overlayContainer.hidden = YES;
+        if (!self.isOverlayVisible) self.overlayContainer.hidden = YES;
     }];
     self.isOverlayVisible = NO;
     [_defaults setBool:NO forKey:kDefaultsOverlayVisible];
-    OLLog(@"Overlay gizlendi.");
 }
 
 - (void)toggleOverlay {
     self.isOverlayVisible ? [self hideOverlay] : [self showOverlay];
 }
 
-#pragma mark - Görsel
+#pragma mark - Image
+
+- (NSString *)imagePath {
+    NSString *lib = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *dir = [lib stringByAppendingPathComponent:@"OverlayTweak"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return [dir stringByAppendingPathComponent:@"overlay.jpg"];
+}
+
+- (UIImage *)downscaledImage:(UIImage *)image maxDimension:(CGFloat)maxDim {
+    if (!image) return nil;
+    CGFloat w = image.size.width * image.scale;
+    CGFloat h = image.size.height * image.scale;
+    CGFloat m = MAX(w, h);
+    if (m <= maxDim) return image;
+    CGFloat f = maxDim / m;
+    CGSize newSize = CGSizeMake(image.size.width * f, image.size.height * f);
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat defaultFormat];
+    fmt.scale = 1.0;
+    fmt.opaque = NO;
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:newSize format:fmt];
+    return [r imageWithActions:^(__unused UIGraphicsImageRendererContext *ctx) {
+        [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+    }];
+}
 
 - (void)setOverlayImage:(UIImage *)image {
     if (!image) return;
-    self.overlayImageView.image = image;
-    NSData *data = UIImagePNGRepresentation(image);
-    if (data) {
-        [_defaults setObject:data forKey:kDefaultsImageBookmark];
-        [_defaults synchronize];
-        OLLog(@"Görsel kaydedildi (%lu bytes).", (unsigned long)data.length);
+    UIImage *scaled = [self downscaledImage:image maxDimension:2048.0];
+    self.overlayView.image = scaled;
+    if (self.overlayContainer.hidden && !self.isOverlayVisible) {
+        [self showOverlay];
     }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSData *data = UIImageJPEGRepresentation(scaled, 0.82);
+        if (!data) return;
+        [data writeToFile:[self imagePath] atomically:YES];
+        /* Drop legacy UserDefaults blob so it stops inflating launches. */
+        if ([self.defaults objectForKey:kDefaultsImageBookmark]) {
+            [self.defaults removeObjectForKey:kDefaultsImageBookmark];
+        }
+        OLLog(@"Image saved (%lu bytes).", (unsigned long)data.length);
+    });
+}
+
+- (void)clearOverlayImage {
+    self.overlayView.image = nil;
+    [self.overlayView clearImage];
+    [[NSFileManager defaultManager] removeItemAtPath:[self imagePath] error:nil];
+    [_defaults removeObjectForKey:kDefaultsImageBookmark];
+}
+
+- (UIImage *)currentImage {
+    return self.overlayView.image;
 }
 
 - (void)loadSavedImage {
-    NSData *data = [_defaults objectForKey:kDefaultsImageBookmark];
-    if (data) {
-        UIImage *img = [UIImage imageWithData:data];
+    NSString *path = [self imagePath];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        UIImage *img = [UIImage imageWithContentsOfFile:path];
         if (img) {
-            self.overlayImageView.image = img;
-            OLLog(@"Görsel yüklendi.");
+            self.overlayView.image = img;
+            OLLog(@"Image loaded from disk.");
+            return;
         }
+    }
+    NSData *legacy = [_defaults objectForKey:kDefaultsImageBookmark];
+    if ([legacy isKindOfClass:[NSData class]] && legacy.length > 0) {
+        UIImage *img = [UIImage imageWithData:legacy];
+        if (img) [self setOverlayImage:img];
     }
 }
 
-#pragma mark - Opacity
+#pragma mark - Appearance properties
 
 - (void)setOpacity:(CGFloat)opacity {
-    opacity = MAX(0, MIN(1, opacity));
-    _currentOpacity = opacity;
+    opacity = MAX(0.02, MIN(1.0, opacity));
+    _currentOpacityValue = opacity;
     if (self.isOverlayVisible) self.overlayContainer.alpha = opacity;
+    [_defaults setBool:YES forKey:kDefaultsHasOpacity];
     [_defaults setDouble:opacity forKey:kDefaultsOpacity];
-    [_defaults synchronize];
+    [self scheduleSave];
 }
 
-- (CGFloat)currentOpacity { return _currentOpacity; }
+- (CGFloat)currentOpacity { return _currentOpacityValue; }
 
-#pragma mark - Kilit
+- (void)setScale:(CGFloat)scale {
+    _currentScaleValue = MAX(0.15, MIN(6.0, scale));
+    [self applyContainerTransform];
+    [self scheduleSave];
+}
+
+- (CGFloat)currentScale { return _currentScaleValue; }
+
+- (void)setRotation:(CGFloat)rotation {
+    _currentRotationValue = rotation;
+    [self applyContainerTransform];
+    [self scheduleSave];
+}
+
+- (CGFloat)currentRotation { return _currentRotationValue; }
 
 - (void)setLocked:(BOOL)locked {
     _isLocked = locked;
-    if (locked) {
-        self.overlayContainer.layer.borderColor = [UIColor systemRedColor].CGColor;
-        self.overlayContainer.layer.borderWidth = 3;
-    } else {
-        self.overlayContainer.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.5].CGColor;
-        self.overlayContainer.layer.borderWidth = 2;
-    }
+    [self.overlayView setLockedAppearance:locked];
     [_defaults setBool:locked forKey:kDefaultsIsLocked];
-    [_defaults synchronize];
 }
 
 - (void)toggleLock { [self setLocked:!self.isLocked]; }
 
-#pragma mark - Durum
+- (void)setFlipHorizontal:(BOOL)flip {
+    _flipH = flip;
+    self.overlayView.flipHorizontal = flip;
+    [_defaults setBool:flip forKey:kDefaultsFlipH];
+}
+
+- (BOOL)flipHorizontal { return _flipH; }
+
+- (void)setFlipVertical:(BOOL)flip {
+    _flipV = flip;
+    self.overlayView.flipVertical = flip;
+    [_defaults setBool:flip forKey:kDefaultsFlipV];
+}
+
+- (BOOL)flipVertical { return _flipV; }
+
+- (UIViewContentMode)contentModeFromIndex:(NSInteger)index {
+    switch (index) {
+        case 1: return UIViewContentModeScaleAspectFill;
+        case 2: return UIViewContentModeScaleToFill;
+        default: return UIViewContentModeScaleAspectFit;
+    }
+}
+
+- (void)setContentModeIndex:(NSInteger)index {
+    _contentModeIndexValue = MAX(0, MIN(2, index));
+    self.overlayView.imageContentMode = [self contentModeFromIndex:_contentModeIndexValue];
+    [_defaults setInteger:_contentModeIndexValue forKey:kDefaultsContentMode];
+}
+
+- (NSInteger)contentModeIndex { return _contentModeIndexValue; }
+
+- (void)resetTransform {
+    _currentScaleValue = 1.0;
+    _currentRotationValue = 0.0;
+    CGRect b = self.overlayWindow.bounds;
+    _currentPosition = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
+    [UIView animateWithDuration:0.2 animations:^{
+        self.overlayContainer.center = self->_currentPosition;
+        [self applyContainerTransform];
+    }];
+    [self scheduleSave];
+}
+
+- (void)resetAllSettings {
+    [self setOpacity:0.5];
+    [self setLocked:NO];
+    [self setFlipHorizontal:NO];
+    [self setFlipVertical:NO];
+    [self setContentModeIndex:0];
+    [self resetTransform];
+    [self clearOverlayImage];
+    [self setMenuHidden:NO];
+    [self showOverlay];
+    [self saveCurrentState];
+}
+
+#pragma mark - Persistence
+
+- (void)scheduleSave {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(saveCurrentState) object:nil];
+    [self performSelector:@selector(saveCurrentState) withObject:nil afterDelay:0.35];
+}
 
 - (void)saveCurrentState {
-    [_defaults setDouble:_currentOpacity forKey:kDefaultsOpacity];
+    [_defaults setDouble:_currentOpacityValue forKey:kDefaultsOpacity];
+    [_defaults setBool:YES forKey:kDefaultsHasOpacity];
     [_defaults setDouble:_currentPosition.x forKey:kDefaultsPositionX];
     [_defaults setDouble:_currentPosition.y forKey:kDefaultsPositionY];
-    [_defaults setDouble:_currentScale forKey:kDefaultsScale];
-    [_defaults setDouble:_currentRotation forKey:kDefaultsRotation];
+    [_defaults setDouble:_currentScaleValue forKey:kDefaultsScale];
+    [_defaults setDouble:_currentRotationValue forKey:kDefaultsRotation];
     [_defaults setBool:_isLocked forKey:kDefaultsIsLocked];
-    [_defaults synchronize];
+    [_defaults setBool:_flipH forKey:kDefaultsFlipH];
+    [_defaults setBool:_flipV forKey:kDefaultsFlipV];
+    [_defaults setInteger:_contentModeIndexValue forKey:kDefaultsContentMode];
+    [_defaults setBool:_menuHidden forKey:kDefaultsMenuHidden];
+    [_defaults setBool:_isOverlayVisible forKey:kDefaultsOverlayVisible];
+    if (self.menuButton) {
+        [_defaults setDouble:self.menuButton.center.x forKey:kDefaultsMenuX];
+        [_defaults setDouble:self.menuButton.center.y forKey:kDefaultsMenuY];
+    }
 }
 
 - (void)loadSavedState {
-    _currentOpacity = [_defaults doubleForKey:kDefaultsOpacity];
-    if (_currentOpacity == 0) _currentOpacity = 0.5;
+    if ([_defaults boolForKey:kDefaultsHasOpacity]) {
+        _currentOpacityValue = [_defaults doubleForKey:kDefaultsOpacity];
+        _currentOpacityValue = MAX(0.02, MIN(1.0, _currentOpacityValue));
+    } else {
+        CGFloat v = [_defaults doubleForKey:kDefaultsOpacity];
+        _currentOpacityValue = (v == 0.0) ? 0.5 : v;
+    }
     _currentPosition = CGPointMake([_defaults doubleForKey:kDefaultsPositionX],
                                    [_defaults doubleForKey:kDefaultsPositionY]);
-    _currentScale = [_defaults doubleForKey:kDefaultsScale];
-    if (_currentScale == 0) _currentScale = 1.0;
-    _currentRotation = [_defaults doubleForKey:kDefaultsRotation];
+    _currentScaleValue = [_defaults doubleForKey:kDefaultsScale];
+    if (_currentScaleValue == 0.0) _currentScaleValue = 1.0;
+    _currentRotationValue = [_defaults doubleForKey:kDefaultsRotation];
     _isLocked = [_defaults boolForKey:kDefaultsIsLocked];
+    _flipH = [_defaults boolForKey:kDefaultsFlipH];
+    _flipV = [_defaults boolForKey:kDefaultsFlipV];
+    _contentModeIndexValue = [_defaults integerForKey:kDefaultsContentMode];
+    _menuHidden = [_defaults boolForKey:kDefaultsMenuHidden];
 }
 
-#pragma mark - Ayarlar Paneli
+#pragma mark - Settings panel
 
 - (void)showSettingsPanel {
     if (self.isSettingsVisible) return;
@@ -518,34 +823,50 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
         return;
     }
 
+    [self.overlayWindow layoutIfNeeded];
+    UIViewController *root = self.overlayWindow.rootViewController;
+    if (!root) return;
+
     self.settingsVC = [[SettingsViewController alloc] init];
 
-    // Container view - TÜM EKRANI kaplar (arka plan dokunma yakalama için)
-    self.settingsContainerView = [[UIView alloc] initWithFrame:self.overlayWindow.bounds];
-    self.settingsContainerView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.4];
-    self.settingsContainerView.alpha = 0;
-    self.settingsContainerView.userInteractionEnabled = YES;
+    UIView *dim = [[UIView alloc] initWithFrame:root.view.bounds];
+    dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    dim.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.45];
+    dim.alpha = 0;
+    dim.userInteractionEnabled = YES;
 
-    // Panel view - Ortalanmış ayarlar paneli
-    CGFloat pw = MIN(320, self.overlayWindow.bounds.size.width - 40);
-    CGFloat ph = 440;
-    CGFloat px = (self.overlayWindow.bounds.size.width - pw) / 2;
-    CGFloat py = (self.overlayWindow.bounds.size.height - ph) / 2;
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(settingsBackgroundTapped:)];
+    tap.delegate = self;
+    tap.cancelsTouchesInView = NO;
+    [dim addGestureRecognizer:tap];
+    self.settingsContainerView = dim;
 
-    // SettingsViewController'ın view'ını ekle
-    [self addChildViewController:self.settingsVC];
-    self.settingsVC.view.frame = CGRectMake(px, py, pw, ph);
-    [self.settingsContainerView addSubview:self.settingsVC.view];
-    [self.settingsVC didMoveToParentViewController:nil];
+    CGFloat pw = MIN(340.0, CGRectGetWidth(root.view.bounds) - 28.0);
+    CGFloat ph = MIN(540.0, CGRectGetHeight(root.view.bounds) - 56.0);
+    self.settingsVC.view.frame = CGRectMake(0, 0, pw, ph);
+    self.settingsVC.view.center = CGPointMake(CGRectGetMidX(dim.bounds), CGRectGetMidY(dim.bounds));
+    self.settingsVC.view.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin |
+                                            UIViewAutoresizingFlexibleRightMargin |
+                                            UIViewAutoresizingFlexibleTopMargin |
+                                            UIViewAutoresizingFlexibleBottomMargin;
+    self.settingsVC.view.layer.cornerRadius = 16;
+    self.settingsVC.view.clipsToBounds = YES;
 
-    [self.overlayWindow addSubview:self.settingsContainerView];
+    [root addChildViewController:self.settingsVC];
+    [dim addSubview:self.settingsVC.view];
+    [root.view addSubview:dim];
+    [self.settingsVC didMoveToParentViewController:root];
 
-    [UIView animateWithDuration:0.3 animations:^{
-        self.settingsContainerView.alpha = 1.0;
-    }];
+    [root.view bringSubviewToFront:self.menuButton];
 
+    [self.settingsVC.view layoutIfNeeded];
+
+    [UIView animateWithDuration:0.22 animations:^{ dim.alpha = 1.0; }];
     self.isSettingsVisible = YES;
-    OLLog(@"Ayarlar paneli gösterildi.");
+}
+
+- (void)settingsBackgroundTapped:(UITapGestureRecognizer *)g {
+    [self hideSettingsPanel];
 }
 
 - (void)hideSettingsPanel {
@@ -555,51 +876,96 @@ NSString *const kDefaultsOverlayVisible = @"overlay_visible";
         return;
     }
 
-    [UIView animateWithDuration:0.3 animations:^{
-        self.settingsContainerView.alpha = 0;
-    } completion:^(BOOL f) {
-        [self.settingsVC willMoveToParentViewController:nil];
-        [self.settingsVC.view removeFromSuperview];
-        [self.settingsVC removeFromParentViewController];
-        [self.settingsContainerView removeFromSuperview];
-        self.settingsContainerView = nil;
-        self.settingsVC = nil;
-    }];
-
+    SettingsViewController *vc = self.settingsVC;
+    UIView *dim = self.settingsContainerView;
     self.isSettingsVisible = NO;
     [self saveCurrentState];
-    OLLog(@"Ayarlar paneli gizlendi.");
+
+    [UIView animateWithDuration:0.2 animations:^{
+        dim.alpha = 0;
+    } completion:^(__unused BOOL f) {
+        [vc willMoveToParentViewController:nil];
+        [vc.view removeFromSuperview];
+        [vc removeFromParentViewController];
+        [dim removeFromSuperview];
+        if (self.settingsVC == vc) {
+            self.settingsContainerView = nil;
+            self.settingsVC = nil;
+        }
+    }];
 }
 
-#pragma mark - Test Alert
+#pragma mark - Modal presentation (image picker)
 
-- (void)showTestAlert {
+- (void)presentModal:(UIViewController *)viewController {
     if (![NSThread isMainThread]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ [self showTestAlert]; });
+        dispatch_async(dispatch_get_main_queue(), ^{ [self presentModal:viewController]; });
         return;
     }
+    UIWindow *host = [self findHostWindow];
+    if (host && host != self.overlayWindow) self.previousKeyWindow = host;
+    [self.overlayWindow makeKeyAndVisible];
+    UIViewController *root = self.overlayWindow.rootViewController;
+    while (root.presentedViewController) root = root.presentedViewController;
+    [root presentViewController:viewController animated:YES completion:nil];
+}
 
-    UIWindow *w = [self findActiveWindow];
-    if (!w) { OLLog(@"Test alert: pencere yok!"); return; }
+- (void)restoreKeyWindow {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self restoreKeyWindow]; });
+        return;
+    }
+    UIWindow *prev = self.previousKeyWindow;
+    self.previousKeyWindow = nil;
+    if (prev) {
+        [prev makeKeyWindow];
+        return;
+    }
+    UIWindow *host = [self findHostWindow];
+    if (host) [host makeKeyWindow];
+}
 
-    UIViewController *vc = w.rootViewController;
-    if (!vc) { OLLog(@"Test alert: rootVC yok!"); return; }
+#pragma mark - Toast
 
-    while (vc.presentedViewController) vc = vc.presentedViewController;
+- (void)showToast:(NSString *)text {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self showToast:text]; });
+        return;
+    }
+    if (!self.overlayWindow) return;
+    [self.toastView removeFromSuperview];
 
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:@"✅ Overlay Aktif"
-        message:@"Tweak yüklendi!\n\n⚙️ butonuna basın."
-        preferredStyle:UIAlertControllerStyleAlert];
+    UILabel *label = [[UILabel alloc] init];
+    label.text = text;
+    label.textColor = [UIColor whiteColor];
+    label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    label.textAlignment = NSTextAlignmentCenter;
+    label.numberOfLines = 2;
+    [label sizeToFit];
 
-    [vc presentViewController:alert animated:YES completion:^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
-        });
-    }];
+    CGFloat pad = 14;
+    CGRect lf = label.frame;
+    UIView *box = [[UIView alloc] initWithFrame:CGRectInset(lf, -pad, -8)];
+    box.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.78];
+    box.layer.cornerRadius = 12;
+    label.center = CGPointMake(CGRectGetMidX(box.bounds), CGRectGetMidY(box.bounds));
+    label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [box addSubview:label];
 
-    OLLog(@"Test alert gösterildi.");
+    CGRect b = self.overlayWindow.bounds;
+    box.center = CGPointMake(CGRectGetMidX(b), b.size.height - 80);
+    box.alpha = 0;
+    [self.overlayWindow.rootViewController.view addSubview:box];
+    self.toastView = box;
+
+    [UIView animateWithDuration:0.18 animations:^{ box.alpha = 1; }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [UIView animateWithDuration:0.25 animations:^{ box.alpha = 0; } completion:^(__unused BOOL f) {
+            [box removeFromSuperview];
+            if (self.toastView == box) self.toastView = nil;
+        }];
+    });
 }
 
 @end

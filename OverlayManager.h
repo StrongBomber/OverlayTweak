@@ -1,19 +1,8 @@
 /**
- * ==============================================================================
- * OverlayManager.h
- * ==============================================================================
+ * OverlayManager.h — overlay lifecycle, gestures, persistence.
  */
 
 #import <UIKit/UIKit.h>
-
-extern NSString *const kDefaultsOpacity;
-extern NSString *const kDefaultsPositionX;
-extern NSString *const kDefaultsPositionY;
-extern NSString *const kDefaultsScale;
-extern NSString *const kDefaultsRotation;
-extern NSString *const kDefaultsImageBookmark;
-extern NSString *const kDefaultsIsLocked;
-extern NSString *const kDefaultsOverlayVisible;
 
 @interface OverlayManager : NSObject
 
@@ -26,17 +15,49 @@ extern NSString *const kDefaultsOverlayVisible;
 @property (nonatomic, assign, readonly) BOOL isSettingsVisible;
 
 - (void)setup;
+
 - (void)showOverlay;
 - (void)hideOverlay;
 - (void)toggleOverlay;
+
 - (void)setOverlayImage:(UIImage *)image;
+- (void)clearOverlayImage;
+- (UIImage *)currentImage;
+
 - (void)setOpacity:(CGFloat)opacity;
 - (CGFloat)currentOpacity;
+
+- (void)setScale:(CGFloat)scale;
+- (CGFloat)currentScale;
+
+- (void)setRotation:(CGFloat)rotation;
+- (CGFloat)currentRotation;
+
 - (void)setLocked:(BOOL)locked;
 - (void)toggleLock;
+
+- (void)setFlipHorizontal:(BOOL)flip;
+- (BOOL)flipHorizontal;
+- (void)setFlipVertical:(BOOL)flip;
+- (BOOL)flipVertical;
+
+- (void)setContentModeIndex:(NSInteger)index;
+- (NSInteger)contentModeIndex;
+
+- (void)resetTransform;
+- (void)resetAllSettings;
+
 - (void)saveCurrentState;
+
 - (void)showSettingsPanel;
 - (void)hideSettingsPanel;
-- (void)showTestAlert;
+
+- (void)presentModal:(UIViewController *)viewController;
+- (void)restoreKeyWindow;
+
+- (void)setMenuHidden:(BOOL)hidden;
+- (BOOL)isMenuHidden;
+
+- (void)showToast:(NSString *)text;
 
 @end

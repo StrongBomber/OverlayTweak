@@ -1,0 +1,20 @@
+# Build products
+*.o
+*.dylib
+*.ipa
+*.dSYM/
+build/
+Overlay.dylib.arm64
+Overlay.dylib.arm64e
+
+# Tools
+tools/insert_dylib
+tools/insert_dylib.exe
+
+# OS / IDE
+.DS_Store
+*.xcuserstate
+xcuserdata/
+.idea/
+*.swp
+*~

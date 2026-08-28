@@ -1,42 +1,41 @@
 /**
- * ==============================================================================
  * SettingsViewController.m
- * ==============================================================================
- * Kritik düzeltmeler:
- *   1. userInteractionEnabled = YES (tüm view'larda)
- *   2. exclusiveTouch = YES (butonlarda)
- *   3. cancelButtonTapsOutside: Arka plana tıklayınca kapatma
- *   4. UIImagePickerController presentViewController düzeltmesi
- * ==============================================================================
+ *
+ * Built in viewDidLayoutSubviews so the panel has a real width.
+ * PHPicker (iOS 14+) — no photo-library permission string required.
  */
 
 #import "SettingsViewController.h"
 #import "OverlayManager.h"
+#import "OverlayCommon.h"
+#import <PhotosUI/PhotosUI.h>
 
-@interface SettingsViewController () <UIImagePickerControllerDelegate, UINavigationControllerDelegate>
+@interface SettingsViewController () <PHPickerViewControllerDelegate, UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UIVisualEffectView *blurView;
 @property (nonatomic, strong) UIButton *imageSelectButton;
+@property (nonatomic, strong) UIButton *pasteButton;
 @property (nonatomic, strong) UIImageView *imagePreview;
 @property (nonatomic, strong) UISlider *opacitySlider;
 @property (nonatomic, strong) UILabel *opacityValueLabel;
+@property (nonatomic, strong) UISlider *scaleSlider;
+@property (nonatomic, strong) UILabel *scaleValueLabel;
 @property (nonatomic, strong) UILabel *lockLabel;
 @property (nonatomic, strong) UISwitch *lockSwitch;
+@property (nonatomic, strong) UISegmentedControl *modeControl;
 @property (nonatomic, strong) UIButton *toggleOverlayButton;
 @property (nonatomic, strong) UIButton *resetButton;
+@property (nonatomic, assign) BOOL uiBuilt;
 @end
 
 @implementation SettingsViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-
-    // Kritik: Tüm view'larda userInteractionEnabled
     self.view.userInteractionEnabled = YES;
     self.view.backgroundColor = [UIColor clearColor];
 
-    // Blur arka plan
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
     self.blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
     self.blurView.frame = self.view.bounds;
@@ -46,122 +45,148 @@
     self.blurView.userInteractionEnabled = YES;
     [self.view addSubview:self.blurView];
 
-    // Scroll view
     self.scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
     self.scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.scrollView.showsVerticalScrollIndicator = NO;
+    self.scrollView.showsVerticalScrollIndicator = YES;
+    self.scrollView.alwaysBounceVertical = YES;
     self.scrollView.userInteractionEnabled = YES;
+    self.scrollView.delaysContentTouches = NO;
     [self.blurView.contentView addSubview:self.scrollView];
 
     self.contentView = [[UIView alloc] initWithFrame:self.view.bounds];
     self.contentView.userInteractionEnabled = YES;
     [self.scrollView addSubview:self.contentView];
-
-    [self buildUI];
-    [self loadState];
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    CGFloat h = CGRectGetMaxY(self.resetButton.frame) + 20;
+    if (!self.uiBuilt && self.view.bounds.size.width >= 32) {
+        self.uiBuilt = YES;
+        [self buildUI];
+        [self loadState];
+    }
+    CGFloat h = CGRectGetMaxY(self.resetButton.frame) + 24;
+    if (h < 80) h = self.view.bounds.size.height;
+    self.scrollView.frame = self.view.bounds;
     self.scrollView.contentSize = CGSizeMake(self.view.bounds.size.width, h);
     self.contentView.frame = CGRectMake(0, 0, self.view.bounds.size.width, h);
 }
 
-#pragma mark - UI Oluşturma
+#pragma mark - UI
 
 - (void)buildUI {
-    CGFloat p = 16; // padding
-    CGFloat sw = self.view.bounds.size.width - p * 2; // section width
+    CGFloat p = 16;
+    CGFloat sw = self.view.bounds.size.width - p * 2;
     CGFloat y = 0;
 
-    // === BAŞLIK ===
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(p, 12, 200, 30)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(p, 14, sw - 48, 28)];
     title.text = @"Overlay Ayarları";
     title.font = [UIFont systemFontOfSize:18 weight:UIFontWeightSemibold];
     title.textColor = [UIColor whiteColor];
-    title.userInteractionEnabled = NO;
     [self.contentView addSubview:title];
 
-    // Kapat butonu
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(self.view.bounds.size.width - 44 - p, 12, 44, 30);
-    closeBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    closeBtn.frame = CGRectMake(self.view.bounds.size.width - 44 - p, 12, 44, 32);
     [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
     closeBtn.titleLabel.font = [UIFont systemFontOfSize:20];
     [closeBtn setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
-    closeBtn.userInteractionEnabled = YES;
     closeBtn.exclusiveTouch = YES;
     [closeBtn addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:closeBtn];
 
     y = 52;
     [self addSeparatorAtY:y];
-    y += 8;
+    y += 10;
 
-    // === GÖRSEL ===
-    UILabel *imgLabel = [self sectionLabel:@"GÖRSEL" y:y];
-    [self.contentView addSubview:imgLabel];
+    [self.contentView addSubview:[self sectionLabel:@"GÖRSEL" y:y]];
     y += 24;
 
-    CGFloat ps = 60; // preview size
+    CGFloat ps = 64;
     self.imagePreview = [[UIImageView alloc] initWithFrame:CGRectMake(p, y, ps, ps)];
     self.imagePreview.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.1];
     self.imagePreview.layer.cornerRadius = 8;
     self.imagePreview.clipsToBounds = YES;
     self.imagePreview.contentMode = UIViewContentModeScaleAspectFit;
-    self.imagePreview.userInteractionEnabled = NO;
     [self.contentView addSubview:self.imagePreview];
 
-    self.imageSelectButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.imageSelectButton.frame = CGRectMake(p + ps + 12, y, sw - ps - 12, 60);
-    [self.imageSelectButton setTitle:@"📷  Galeriden Görsel Seç" forState:UIControlStateNormal];
-    self.imageSelectButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    [self.imageSelectButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.imageSelectButton.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
-    self.imageSelectButton.layer.cornerRadius = 8;
-    self.imageSelectButton.userInteractionEnabled = YES;
-    self.imageSelectButton.exclusiveTouch = YES;
+    self.imageSelectButton = [self actionButton:@"📷  Galeriden Seç"
+                                          frame:CGRectMake(p + ps + 10, y, sw - ps - 10, 30)
+                                          color:[[UIColor whiteColor] colorWithAlphaComponent:0.15]
+                                     titleColor:[UIColor whiteColor]];
     [self.imageSelectButton addTarget:self action:@selector(selectImageTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:self.imageSelectButton];
 
-    y += 76;
-    [self addSeparatorAtY:y];
-    y += 8;
+    self.pasteButton = [self actionButton:@"📋  Panodan Yapıştır"
+                                    frame:CGRectMake(p + ps + 10, y + 34, sw - ps - 10, 30)
+                                    color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                               titleColor:[UIColor whiteColor]];
+    [self.pasteButton addTarget:self action:@selector(pasteTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:self.pasteButton];
 
-    // === ŞEFFAFLIK ===
-    UILabel *opLabel = [self sectionLabel:@"ŞEFFAFLIK" y:y];
-    [self.contentView addSubview:opLabel];
-    y += 28;
+    y += 80;
+    [self addSeparatorAtY:y];
+    y += 10;
+
+    [self.contentView addSubview:[self sectionLabel:@"ŞEFFAFLIK" y:y]];
+    y += 26;
 
     self.opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(p, y, sw - 55, 30)];
-    self.opacitySlider.minimumValue = 0;
-    self.opacitySlider.maximumValue = 1;
-    self.opacitySlider.value = 0.5;
+    self.opacitySlider.minimumValue = 0.05f;
+    self.opacitySlider.maximumValue = 1.0f;
+    self.opacitySlider.value = 0.5f;
     self.opacitySlider.minimumTrackTintColor = [UIColor systemBlueColor];
     self.opacitySlider.maximumTrackTintColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2];
-    self.opacitySlider.userInteractionEnabled = YES;
     [self.opacitySlider addTarget:self action:@selector(opacityChanged:) forControlEvents:UIControlEventValueChanged];
     [self.contentView addSubview:self.opacitySlider];
 
-    self.opacityValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(
-        self.view.bounds.size.width - p - 50, y, 50, 30)];
+    self.opacityValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - p - 50, y, 50, 30)];
     self.opacityValueLabel.text = @"50%";
     self.opacityValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     self.opacityValueLabel.textColor = [UIColor whiteColor];
     self.opacityValueLabel.textAlignment = NSTextAlignmentRight;
-    self.opacityValueLabel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    self.opacityValueLabel.userInteractionEnabled = NO;
     [self.contentView addSubview:self.opacityValueLabel];
 
-    y += 44;
-    [self addSeparatorAtY:y];
-    y += 8;
+    y += 40;
+    [self.contentView addSubview:[self sectionLabel:@"ÖLÇEK" y:y]];
+    y += 26;
 
-    // === KİLİT ===
-    UILabel *lockLbl = [self sectionLabel:@"KİLİT" y:y];
-    [self.contentView addSubview:lockLbl];
-    y += 28;
+    self.scaleSlider = [[UISlider alloc] initWithFrame:CGRectMake(p, y, sw - 55, 30)];
+    self.scaleSlider.minimumValue = 0.2f;
+    self.scaleSlider.maximumValue = 4.0f;
+    self.scaleSlider.value = 1.0f;
+    self.scaleSlider.minimumTrackTintColor = [UIColor systemTealColor];
+    self.scaleSlider.maximumTrackTintColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2];
+    [self.scaleSlider addTarget:self action:@selector(scaleChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.contentView addSubview:self.scaleSlider];
+
+    self.scaleValueLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - p - 50, y, 50, 30)];
+    self.scaleValueLabel.text = @"1.0×";
+    self.scaleValueLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    self.scaleValueLabel.textColor = [UIColor whiteColor];
+    self.scaleValueLabel.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:self.scaleValueLabel];
+
+    y += 42;
+    [self.contentView addSubview:[self sectionLabel:@"SIĞDIRMA" y:y]];
+    y += 26;
+
+    self.modeControl = [[UISegmentedControl alloc] initWithItems:@[@"Sığdır", @"Doldur", @"Ger"]];
+    self.modeControl.frame = CGRectMake(p, y, sw, 32);
+    self.modeControl.selectedSegmentIndex = 0;
+    if (@available(iOS 13.0, *)) {
+        self.modeControl.selectedSegmentTintColor = [UIColor systemBlueColor];
+        [self.modeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]}
+                                        forState:UIControlStateNormal];
+    }
+    [self.modeControl addTarget:self action:@selector(modeChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.contentView addSubview:self.modeControl];
+
+    y += 48;
+    [self addSeparatorAtY:y];
+    y += 10;
+
+    [self.contentView addSubview:[self sectionLabel:@"KİLİT" y:y]];
+    y += 26;
 
     UIView *lockRow = [[UIView alloc] initWithFrame:CGRectMake(p, y, sw, 44)];
     lockRow.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.05];
@@ -173,122 +198,159 @@
     self.lockLabel.text = @"🔒  Overlay Kilitle";
     self.lockLabel.font = [UIFont systemFontOfSize:15];
     self.lockLabel.textColor = [UIColor whiteColor];
-    self.lockLabel.userInteractionEnabled = NO;
     [lockRow addSubview:self.lockLabel];
 
     self.lockSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(sw - 59, 7, 0, 0)];
     self.lockSwitch.onTintColor = [UIColor systemBlueColor];
-    self.lockSwitch.userInteractionEnabled = YES;
     [self.lockSwitch addTarget:self action:@selector(lockChanged:) forControlEvents:UIControlEventValueChanged];
     [lockRow addSubview:self.lockSwitch];
 
-    y += 60;
-
-    UILabel *info = [[UILabel alloc] initWithFrame:CGRectMake(p, y, sw, 30)];
-    info.text = @"Kilitliyken overlay hareket etmez ve\ndokunmalar oyuna geçer.";
+    y += 52;
+    UILabel *info = [[UILabel alloc] initWithFrame:CGRectMake(p, y, sw, 32)];
+    info.text = @"Kilitliyken overlay hareket etmez, dokunmalar oyuna geçer. Çift dokunuş konumu sıfırlar.";
     info.font = [UIFont systemFontOfSize:11];
-    info.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.4];
+    info.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.45];
     info.numberOfLines = 2;
-    info.userInteractionEnabled = NO;
     [self.contentView addSubview:info];
 
-    y += 44;
+    y += 40;
+    [self addSeparatorAtY:y];
+    y += 12;
+
+    [self.contentView addSubview:[self sectionLabel:@"ÇEVİR" y:y]];
+    y += 26;
+
+    UIButton *flipH = [self actionButton:@"↔  Yatay"
+                                   frame:CGRectMake(p, y, (sw - 8) / 2, 40)
+                                   color:[[UIColor whiteColor] colorWithAlphaComponent:0.12]
+                              titleColor:[UIColor whiteColor]];
+    [flipH addTarget:self action:@selector(flipHTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:flipH];
+
+    UIButton *flipV = [self actionButton:@"↕  Dikey"
+                                   frame:CGRectMake(p + (sw - 8) / 2 + 8, y, (sw - 8) / 2, 40)
+                                   color:[[UIColor whiteColor] colorWithAlphaComponent:0.12]
+                              titleColor:[UIColor whiteColor]];
+    [flipV addTarget:self action:@selector(flipVTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:flipV];
+
+    y += 52;
     [self addSeparatorAtY:y];
     y += 16;
 
-    // === BUTONLAR ===
-    self.toggleOverlayButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.toggleOverlayButton.frame = CGRectMake(p, y, sw, 44);
-    [self.toggleOverlayButton setTitle:@"👁  Overlay Göster/Gizle" forState:UIControlStateNormal];
-    self.toggleOverlayButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    [self.toggleOverlayButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.toggleOverlayButton.backgroundColor = [UIColor systemBlueColor];
-    self.toggleOverlayButton.layer.cornerRadius = 8;
-    self.toggleOverlayButton.userInteractionEnabled = YES;
-    self.toggleOverlayButton.exclusiveTouch = YES;
+    self.toggleOverlayButton = [self actionButton:@"👁  Overlay Göster / Gizle"
+                                            frame:CGRectMake(p, y, sw, 44)
+                                            color:[UIColor systemBlueColor]
+                                       titleColor:[UIColor whiteColor]];
     [self.toggleOverlayButton addTarget:self action:@selector(toggleOverlayTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:self.toggleOverlayButton];
 
-    y += 56;
+    y += 52;
+    UIButton *hideMenu = [self actionButton:@"🫥  Menü Butonunu Gizle"
+                                      frame:CGRectMake(p, y, sw, 44)
+                                      color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                                 titleColor:[UIColor whiteColor]];
+    [hideMenu addTarget:self action:@selector(hideMenuTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:hideMenu];
 
-    self.resetButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.resetButton.frame = CGRectMake(p, y, sw, 44);
-    [self.resetButton setTitle:@"🔄  Tüm Ayarları Sıfırla" forState:UIControlStateNormal];
-    self.resetButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    [self.resetButton setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
-    self.resetButton.backgroundColor = [[UIColor systemRedColor] colorWithAlphaComponent:0.1];
-    self.resetButton.layer.cornerRadius = 8;
-    self.resetButton.userInteractionEnabled = YES;
-    self.resetButton.exclusiveTouch = YES;
+    y += 52;
+    UIButton *resetPos = [self actionButton:@"🎯  Konumu Ortala"
+                                      frame:CGRectMake(p, y, sw, 44)
+                                      color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                                 titleColor:[UIColor whiteColor]];
+    [resetPos addTarget:self action:@selector(resetPosTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:resetPos];
+
+    y += 56;
+    self.resetButton = [self actionButton:@"🔄  Tüm Ayarları Sıfırla"
+                                    frame:CGRectMake(p, y, sw, 44)
+                                    color:[[UIColor systemRedColor] colorWithAlphaComponent:0.14]
+                               titleColor:[UIColor systemRedColor]];
     [self.resetButton addTarget:self action:@selector(resetTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:self.resetButton];
 }
 
-#pragma mark - Yardımcı UI
+- (UIButton *)actionButton:(NSString *)title frame:(CGRect)frame color:(UIColor *)bg titleColor:(UIColor *)tc {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = frame;
+    [b setTitle:title forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    [b setTitleColor:tc forState:UIControlStateNormal];
+    b.backgroundColor = bg;
+    b.layer.cornerRadius = 8;
+    b.exclusiveTouch = YES;
+    return b;
+}
 
 - (UILabel *)sectionLabel:(NSString *)text y:(CGFloat)y {
     UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16, y, self.view.bounds.size.width - 32, 20)];
     l.text = text;
     l.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-    l.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.6];
-    l.userInteractionEnabled = NO;
+    l.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.55];
     return l;
 }
 
 - (void)addSeparatorAtY:(CGFloat)y {
     UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(16, y, self.view.bounds.size.width - 32, 0.5)];
-    sep.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+    sep.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.14];
     sep.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    sep.userInteractionEnabled = NO;
     [self.contentView addSubview:sep];
 }
 
-#pragma mark - Durum
+#pragma mark - State
 
 - (void)loadState {
     OverlayManager *mgr = [OverlayManager sharedManager];
-    self.opacitySlider.value = [mgr currentOpacity];
-    self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", [mgr currentOpacity] * 100];
+    self.opacitySlider.value = (float)[mgr currentOpacity];
+    self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", [mgr currentOpacity] * 100.0];
+    self.scaleSlider.value = (float)[mgr currentScale];
+    self.scaleValueLabel.text = [NSString stringWithFormat:@"%.1f×", [mgr currentScale]];
     self.lockSwitch.on = mgr.isLocked;
     self.lockLabel.text = mgr.isLocked ? @"🔓  Overlay Kilidini Aç" : @"🔒  Overlay Kilitle";
-
-    NSData *data = [[NSUserDefaults standardUserDefaults] objectForKey:kDefaultsImageBookmark];
-    if (data) self.imagePreview.image = [UIImage imageWithData:data];
+    self.modeControl.selectedSegmentIndex = [mgr contentModeIndex];
+    self.imagePreview.image = [mgr currentImage];
 }
 
-#pragma mark - Aksiyonlar
+#pragma mark - Actions
 
 - (void)closeTapped {
     [[OverlayManager sharedManager] hideSettingsPanel];
 }
 
 - (void)selectImageTapped {
-    OLLog(@"Görsel seç butonuna basıldı!");
+    OLLog(@"Opening PHPicker");
+    PHPickerConfiguration *config = [[PHPickerConfiguration alloc] init];
+    config.filter = [PHPickerFilter imagesFilter];
+    config.selectionLimit = 1;
+    PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:config];
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationFormSheet;
+    [[OverlayManager sharedManager] presentModal:picker];
+}
 
-    if (![UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypePhotoLibrary]) {
-        [self showAlert:@"Hata" msg:@"Galeri erişimi yok."];
+- (void)pasteTapped {
+    UIImage *img = [UIPasteboard generalPasteboard].image;
+    if (!img) {
+        [self showAlert:@"Pano boş" msg:@"Önce bir görsel kopyalayın."];
         return;
     }
-
-    UIImagePickerController *picker = [[UIImagePickerController alloc] init];
-    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
-    picker.delegate = self;
-    picker.allowsEditing = NO;
-    picker.mediaTypes = @[@"public.image"];
-
-    if (@available(iOS 13.0, *)) {
-        picker.modalPresentationStyle = UIModalPresentationPageSheet;
-    }
-
-    // Kritik: Doğru view controller'dan present et
-    [self presentViewController:picker animated:YES completion:^{
-        OLLog(@"Galeri açıldı.");
-    }];
+    [[OverlayManager sharedManager] setOverlayImage:img];
+    self.imagePreview.image = img;
+    [[OverlayManager sharedManager] showToast:@"Görsel panodan alındı"];
 }
 
 - (void)opacityChanged:(UISlider *)slider {
     [[OverlayManager sharedManager] setOpacity:slider.value];
-    self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", slider.value * 100];
+    self.opacityValueLabel.text = [NSString stringWithFormat:@"%.0f%%", slider.value * 100.0];
+}
+
+- (void)scaleChanged:(UISlider *)slider {
+    [[OverlayManager sharedManager] setScale:slider.value];
+    self.scaleValueLabel.text = [NSString stringWithFormat:@"%.1f×", slider.value];
+}
+
+- (void)modeChanged:(UISegmentedControl *)c {
+    [[OverlayManager sharedManager] setContentModeIndex:c.selectedSegmentIndex];
 }
 
 - (void)lockChanged:(UISwitch *)sw {
@@ -296,54 +358,74 @@
     self.lockLabel.text = sw.isOn ? @"🔓  Overlay Kilidini Aç" : @"🔒  Overlay Kilitle";
 }
 
+- (void)flipHTapped {
+    OverlayManager *mgr = [OverlayManager sharedManager];
+    [mgr setFlipHorizontal:![mgr flipHorizontal]];
+}
+
+- (void)flipVTapped {
+    OverlayManager *mgr = [OverlayManager sharedManager];
+    [mgr setFlipVertical:![mgr flipVertical]];
+}
+
 - (void)toggleOverlayTapped {
     [[OverlayManager sharedManager] toggleOverlay];
+}
+
+- (void)hideMenuTapped {
+    [[OverlayManager sharedManager] setMenuHidden:YES];
+    [[OverlayManager sharedManager] hideSettingsPanel];
+}
+
+- (void)resetPosTapped {
+    [[OverlayManager sharedManager] resetTransform];
+    self.scaleSlider.value = 1.0f;
+    self.scaleValueLabel.text = @"1.0×";
 }
 
 - (void)resetTapped {
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"Sıfırla"
-        message:@"Tüm ayarlar sıfırlanacak?"
+        message:@"Tüm ayarlar ve görsel silinecek."
         preferredStyle:UIAlertControllerStyleAlert];
-
     [alert addAction:[UIAlertAction actionWithTitle:@"İptal" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Sıfırla" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"Sıfırla" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) {
         OverlayManager *mgr = [OverlayManager sharedManager];
-        [mgr setOpacity:0.5];
-        [mgr setLocked:NO];
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:kDefaultsImageBookmark];
-        [[NSUserDefaults standardUserDefaults] synchronize];
-        self.opacitySlider.value = 0.5;
-        self.opacityValueLabel.text = @"50%";
-        self.lockSwitch.on = NO;
-        self.lockLabel.text = @"🔒  Overlay Kilitle";
-        self.imagePreview.image = nil;
+        [mgr resetAllSettings];
+        [self loadState];
     }]];
-
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-#pragma mark - UIImagePickerControllerDelegate
+#pragma mark - PHPickerViewControllerDelegate
 
-- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey,id> *)info {
-    UIImage *img = info[UIImagePickerControllerOriginalImage];
-    if (img) {
-        [[OverlayManager sharedManager] setOverlayImage:img];
-        self.imagePreview.image = img;
-        OLLog(@"Görsel seçildi ve kaydedildi.");
-    }
-    [picker dismissViewControllerAnimated:YES completion:nil];
-}
-
-- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
-    [picker dismissViewControllerAnimated:YES completion:nil];
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+    [picker dismissViewControllerAnimated:YES completion:^{
+        [[OverlayManager sharedManager] restoreKeyWindow];
+    }];
+    PHPickerResult *result = results.firstObject;
+    if (!result) return;
+    NSItemProvider *provider = result.itemProvider;
+    if (![provider canLoadObjectOfClass:[UIImage class]]) return;
+    [provider loadObjectOfClass:[UIImage class] completionHandler:^(id<NSItemProviderReading> obj, NSError *error) {
+        UIImage *img = (UIImage *)obj;
+        if (!img) {
+            OLLog(@"PHPicker load failed: %@", error);
+            return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[OverlayManager sharedManager] setOverlayImage:img];
+            self.imagePreview.image = img;
+            OLLog(@"Image selected.");
+        });
+    }];
 }
 
 #pragma mark - Alert
 
 - (void)showAlert:(NSString *)title msg:(NSString *)msg {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:msg
-        preferredStyle:UIAlertControllerStyleAlert];
+                                                        preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"Tamam" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:a animated:YES completion:nil];
 }

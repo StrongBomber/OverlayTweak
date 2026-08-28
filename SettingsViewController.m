@@ -202,6 +202,20 @@
     self.opacityValueLabel.textAlignment = NSTextAlignmentRight;
     [self.contentView addSubview:self.opacityValueLabel];
 
+    y += 36;
+    NSArray *opPresets = @[@"25%", @"50%", @"75%", @"100%"];
+    CGFloat opw = (sw - 18) / 4.0;
+    for (NSInteger i = 0; i < 4; i++) {
+        UIButton *b = [self actionButton:opPresets[i]
+                                  frame:CGRectMake(p + i * (opw + 6), y, opw, 28)
+                                  color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                             titleColor:[UIColor whiteColor]];
+        b.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+        b.tag = 600 + i;
+        [b addTarget:self action:@selector(opacityPresetTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [self.contentView addSubview:b];
+    }
+
     y += 40;
     [self.contentView addSubview:[self sectionLabel:@"ÖLÇEK" y:y]];
     y += 26;
@@ -404,7 +418,29 @@
                                             frame:CGRectMake(p, y, sw, 44)
                                             color:[UIColor systemBlueColor]
                                        titleColor:[UIColor whiteColor]];
-    [self.toggleOverlayButton addTarget:self action:@selector(toggleOvert:0.14]
+    [self.toggleOverlayButton addTarget:self action:@selector(toggleOverlayTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:self.toggleOverlayButton];
+
+    y += 52;
+    UIButton *hideMenu = [self actionButton:@"🫥  Menü Butonunu Gizle"
+                                      frame:CGRectMake(p, y, sw, 44)
+                                      color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                                 titleColor:[UIColor whiteColor]];
+    [hideMenu addTarget:self action:@selector(hideMenuTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:hideMenu];
+
+    y += 52;
+    UIButton *resetPos = [self actionButton:@"🎯  Konumu Ortala"
+                                      frame:CGRectMake(p, y, sw, 44)
+                                      color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                                 titleColor:[UIColor whiteColor]];
+    [resetPos addTarget:self action:@selector(resetPosTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:resetPos];
+
+    y += 56;
+    self.resetButton = [self actionButton:@"🔄  Tüm Ayarları Sıfırla"
+                                    frame:CGRectMake(p, y, sw, 44)
+                                    color:[[UIColor systemRedColor] colorWithAlphaComponent:0.14]
                                titleColor:[UIColor systemRedColor]];
     [self.resetButton addTarget:self action:@selector(resetTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:self.resetButton];

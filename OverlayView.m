@@ -112,6 +112,7 @@
     _image = nil;
     _imageView.image = nil;
     _placeholderLabel.hidden = NO;
+    self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.28];
 }
 
 - (void)setCornerRadius:(CGFloat)c {

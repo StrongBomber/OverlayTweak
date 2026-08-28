@@ -1,12 +1,4 @@
-# Drop-in replacement for .github/workflows/build.yml
-# (copy over that path if your token has the `workflows` permission).
-#
-# Differences vs the repo workflow:
-#   - checkout@v5 (Node 24; avoids the Node 20 deprecation warning)
-#   - Robust Xcode discovery if Xcode.app is not the default symlink
-#   - set -euo pipefail, SDKROOT/DEVELOPER_DIR exported
-#   - Job summary + if-no-files-found: error on the artifact
-
+# Copy to .github/workflows/build.yml if the GitHub App cannot update workflows.
 name: Build Overlay.dylib
 
 on:
@@ -17,72 +9,34 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     name: Build iOS Dylib
     runs-on: macos-15
     timeout-minutes: 20
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
+      - uses: actions/checkout@v5
       - name: Select Xcode
         run: |
           set -euo pipefail
-          echo "Available Xcode apps:"
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
-
           if [ -d /Applications/Xcode.app ]; then
             sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           else
-            XCODE_APP="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-            if [ -z "${XCODE_APP}" ]; then
-              echo "::error::Xcode not found on this runner"
-              exit 1
-            fi
-            sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
+            sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)/Contents/Developer"
           fi
-
-          echo "DEVELOPER_DIR=$(xcode-select -p)"
           xcodebuild -version
-          echo "iOS SDK path: $(xcrun --sdk iphoneos --show-sdk-path)"
-          echo "iOS SDK version: $(xcrun --sdk iphoneos --show-sdk-version)"
-
-      - name: Build Overlay.dylib
+          xcrun --sdk iphoneos --show-sdk-path
+      - run: python3 scripts/check_objc.py
+      - name: Build
         run: |
           set -euo pipefail
-          export DEVELOPER_DIR="$(xcode-select -p)"
           export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
-          make clean
-          make
+          make clean && make
           test -f Overlay.dylib
-          echo "=== Build output ==="
-          ls -lh Overlay.dylib
-          file Overlay.dylib
           lipo -info Overlay.dylib
-          otool -hv Overlay.dylib | sed -n '1,40p'
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Overlay.dylib
           path: Overlay.dylib
           if-no-files-found: error
           retention-days: 90
-
-      - name: Job summary
-        if: success()
-        run: |
-          {
-            echo "## Overlay.dylib"
-            echo ""
-            echo "- **Size:** $(ls -lh Overlay.dylib | awk '{print $5}')"
-            echo "- **Arch:** $(lipo -info Overlay.dylib)"
-            echo "- **Xcode:** $(xcodebuild -version | tr '\n' ' ')"
-            echo "- **SDK:** $(xcrun --sdk iphoneos --show-sdk-version)"
-          } >> "$GITHUB_STEP_SUMMARY"

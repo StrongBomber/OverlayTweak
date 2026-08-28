@@ -74,6 +74,9 @@ def main() -> int:
     # Corrupted fragments that previously broke the build.
     if "pinchGestureeRecognizer" in mgr_m:
         errors.append("OverlayManager.m contains corrupted pinchGestureeRecognizer fragment")
+    settings = read("SettingsViewController.m")
+    if "toggleOvert:" in settings or "toggleOvert:0" in settings:
+        errors.append("SettingsViewController.m contains corrupted selector toggleOvert")
     if mgr_m.count("\n@end\n") < 3:
         errors.append("OverlayManager.m is missing expected @end markers")
     # File must end with @end

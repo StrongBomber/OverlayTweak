@@ -16,6 +16,7 @@
 #import "OverlayView.h"
 #import "SettingsViewController.h"
 #import <math.h>
+#import <QuartzCore/QuartzCore.h>
 
 #pragma mark - Private interface (must be first so the window can call us)
 

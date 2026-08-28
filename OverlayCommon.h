@@ -10,7 +10,7 @@
 
 #define OLLog(fmt, ...) NSLog(@"[OverlayTweak] " fmt, ##__VA_ARGS__)
 
-static NSString * const kOLVersion = @"1.1.0";
+static NSString * const kOLVersion = @"1.2.0";
 
 static NSString * const kDefaultsOpacity        = @"overlay_opacity";
 static NSString * const kDefaultsPositionX      = @"overlay_position_x";
@@ -28,5 +28,8 @@ static NSString * const kDefaultsFlipV          = @"overlay_flip_v";
 static NSString * const kDefaultsContentMode    = @"overlay_content_mode";
 static NSString * const kDefaultsWelcomeShown   = @"overlay_welcome_shown";
 static NSString * const kDefaultsHasOpacity     = @"overlay_has_opacity";
+static NSString * const kDefaultsSizeMode       = @"overlay_size_mode";   /* 0 = follow image, 1 = custom */
+static NSString * const kDefaultsCustomWidth    = @"overlay_custom_w";
+static NSString * const kDefaultsCustomHeight   = @"overlay_custom_h";
 
 #endif /* OverlayCommon_h */

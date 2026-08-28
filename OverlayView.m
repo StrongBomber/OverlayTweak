@@ -89,6 +89,9 @@
     _image = image;
     _imageView.image = image;
     _placeholderLabel.hidden = (image != nil);
+    self.backgroundColor = image
+        ? [UIColor clearColor]
+        : [[UIColor blackColor] colorWithAlphaComponent:0.28];
     if (image) {
         _imageView.alpha = 0;
         [UIView animateWithDuration:0.18 animations:^{ self->_imageView.alpha = 1; }];

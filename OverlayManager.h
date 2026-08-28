@@ -44,6 +44,15 @@
 - (void)setContentModeIndex:(NSInteger)index;
 - (NSInteger)contentModeIndex;
 
+/// 0 = match photo aspect/size, 1 = custom width × height (points).
+- (void)setSizeMode:(NSInteger)mode;
+- (NSInteger)sizeMode;
+- (CGSize)customSize;
+- (void)setCustomSize:(CGSize)size;
+- (CGSize)currentOverlaySize;
+- (CGSize)imageNativeSize;
+- (void)syncOverlaySizeAnimated:(BOOL)animated;
+
 - (void)resetTransform;
 - (void)resetAllSettings;
 
@@ -53,6 +62,7 @@
 - (void)hideSettingsPanel;
 
 - (void)presentModal:(UIViewController *)viewController;
+- (void)makeOverlayWindowKey;
 - (void)restoreKeyWindow;
 
 - (void)setMenuHidden:(BOOL)hidden;

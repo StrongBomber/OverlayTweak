@@ -127,6 +127,54 @@
     [self addSeparatorAtY:y];
     y += 10;
 
+    [self.contentView addSubview:[self sectionLabel:@"BOYUT" y:y]];
+    y += 26;
+
+    self.sizeModeControl = [[UISegmentedControl alloc] initWithItems:@[@"Fotoğrafa göre", @"Özel"]];
+    self.sizeModeControl.frame = CGRectMake(p, y, sw, 32);
+    self.sizeModeControl.selectedSegmentIndex = 0;
+    if (@available(iOS 13.0, *)) {
+        self.sizeModeControl.selectedSegmentTintColor = [UIColor systemBlueColor];
+        [self.sizeModeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]}
+                                            forState:UIControlStateNormal];
+    }
+    [self.sizeModeControl addTarget:self action:@selector(sizeModeChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.contentView addSubview:self.sizeModeControl];
+
+    y += 40;
+    self.sizeInfoLabel = [[UILabel alloc] initWithFrame:CGRectMake(p, y, sw, 36)];
+    self.sizeInfoLabel.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightRegular];
+    self.sizeInfoLabel.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.7];
+    self.sizeInfoLabel.numberOfLines = 2;
+    self.sizeInfoLabel.text = @"Görsel seçilmedi";
+    [self.contentView addSubview:self.sizeInfoLabel];
+
+    y += 40;
+    self.customSizeButton = [self actionButton:@"📐  Genişlik × Yükseklik gir"
+                                         frame:CGRectMake(p, y, sw, 40)
+                                         color:[[UIColor whiteColor] colorWithAlphaComponent:0.12]
+                                    titleColor:[UIColor whiteColor]];
+    [self.customSizeButton addTarget:self action:@selector(customSizeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:self.customSizeButton];
+
+    y += 48;
+    CGFloat pw = (sw - 16) / 5.0;
+    NSArray *presets = @[@"1:1", @"9:16", @"16:9", @"4:3", @"3:4"];
+    for (NSInteger i = 0; i < 5; i++) {
+        UIButton *b = [self actionButton:presets[i]
+                                  frame:CGRectMake(p + i * (pw + 4), y, pw, 32)
+                                  color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                             titleColor:[UIColor whiteColor]];
+        b.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+        b.tag = 500 + i;
+        [b addTarget:self action:@selector(presetTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [self.contentView addSubview:b];
+    }
+
+    y += 44;
+    [self addSeparatorAtY:y];
+    y += 10;
+
     [self.contentView addSubview:[self sectionLabel:@"ŞEFFAFLIK" y:y]];
     y += 26;
 
@@ -309,6 +357,40 @@
     self.lockLabel.text = mgr.isLocked ? @"🔓  Overlay Kilidini Aç" : @"🔒  Overlay Kilitle";
     self.modeControl.selectedSegmentIndex = [mgr contentModeIndex];
     self.imagePreview.image = [mgr currentImage];
+    self.sizeModeControl.selectedSegmentIndex = [mgr sizeMode];
+    [self refreshSizeInfo];
+}
+
+- (NSString *)ratioStringForSize:(CGSize)s {
+    if (s.width < 1 || s.height < 1) return @"—";
+    NSInteger w = (NSInteger)llround(s.width);
+    NSInteger h = (NSInteger)llround(s.height);
+    NSInteger a = w, b = h;
+    while (b != 0) { NSInteger t = a % b; a = b; b = t; }
+    NSInteger g = MAX(1, a);
+    NSInteger rw = w / g, rh = h / g;
+    if (rw <= 32 && rh <= 32) {
+        return [NSString stringWithFormat:@"%ld:%ld", (long)rw, (long)rh];
+    }
+    return [NSString stringWithFormat:@"%.2f:1", s.width / s.height];
+}
+
+- (void)refreshSizeInfo {
+    OverlayManager *mgr = [OverlayManager sharedManager];
+    CGSize overlay = [mgr currentOverlaySize];
+    CGSize native = [mgr imageNativeSize];
+    NSString *ratio = [self ratioStringForSize:(native.width > 0 ? native : overlay)];
+    if (native.width > 0) {
+        BOOL clamped = (native.width > overlay.width + 0.5 || native.height > overlay.height + 0.5);
+        self.sizeInfoLabel.text = [NSString stringWithFormat:
+            @"Fotoğraf %.0f × %.0f px  (%@)\nOverlay %.0f × %.0f pt%@",
+            native.width, native.height, ratio,
+            overlay.width, overlay.height,
+            clamped ? @"  ·  ekrana sığdırıldı" : @""];
+    } else {
+        self.sizeInfoLabel.text = [NSString stringWithFormat:
+            @"Görsel yok — overlay %.0f × %.0f pt", overlay.width, overlay.height];
+    }
 }
 
 #pragma mark - Actions
@@ -336,7 +418,74 @@
     }
     [[OverlayManager sharedManager] setOverlayImage:img];
     self.imagePreview.image = img;
+    [self refreshSizeInfo];
     [[OverlayManager sharedManager] showToast:@"Görsel panodan alındı"];
+}
+
+- (void)sizeModeChanged:(UISegmentedControl *)c {
+    [[OverlayManager sharedManager] setSizeMode:c.selectedSegmentIndex];
+    [self refreshSizeInfo];
+    self.scaleSlider.value = (float)[[OverlayManager sharedManager] currentScale];
+    self.scaleValueLabel.text = [NSString stringWithFormat:@"%.1f×", [[OverlayManager sharedManager] currentScale]];
+}
+
+- (void)customSizeTapped {
+    OverlayManager *mgr = [OverlayManager sharedManager];
+    CGSize cur = [mgr sizeMode] == 1 ? [mgr customSize] : [mgr currentOverlaySize];
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"Özel boyut"
+        message:@"Overlay genişliği × yüksekliği (nokta). Fotoğraf oranından bağımsızdır."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.keyboardType = UIKeyboardTypeDecimalPad;
+        tf.placeholder = @"Genişlik";
+        tf.text = [NSString stringWithFormat:@"%.0f", cur.width];
+        tf.textAlignment = NSTextAlignmentCenter;
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.keyboardType = UIKeyboardTypeDecimalPad;
+        tf.placeholder = @"Yükseklik";
+        tf.text = [NSString stringWithFormat:@"%.0f", cur.height];
+        tf.textAlignment = NSTextAlignmentCenter;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"İptal" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *a) {
+        [mgr restoreKeyWindow];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Uygula" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) {
+        CGFloat w = [alert.textFields[0].text doubleValue];
+        CGFloat h = [alert.textFields[1].text doubleValue];
+        if (w < 40) w = 40;
+        if (h < 40) h = 40;
+        [mgr setCustomSize:CGSizeMake(w, h)];
+        self.sizeModeControl.selectedSegmentIndex = 1;
+        self.scaleSlider.value = 1.0f;
+        self.scaleValueLabel.text = @"1.0×";
+        [self refreshSizeInfo];
+        [mgr restoreKeyWindow];
+    }]];
+    [mgr presentModal:alert];
+}
+
+- (void)presetTapped:(UIButton *)btn {
+    CGFloat rw = 1, rh = 1;
+    switch (btn.tag) {
+        case 500: rw = 1; rh = 1; break;
+        case 501: rw = 9; rh = 16; break;
+        case 502: rw = 16; rh = 9; break;
+        case 503: rw = 4; rh = 3; break;
+        case 504: rw = 3; rh = 4; break;
+        default: break;
+    }
+    OverlayManager *mgr = [OverlayManager sharedManager];
+    CGSize screen = mgr.overlayWindow ? mgr.overlayWindow.bounds.size : [UIScreen mainScreen].bounds.size;
+    CGFloat maxW = screen.width * 0.72;
+    CGFloat maxH = screen.height * 0.62;
+    CGFloat f = MIN(maxW / rw, maxH / rh);
+    [mgr setCustomSize:CGSizeMake(rw * f, rh * f)];
+    self.sizeModeControl.selectedSegmentIndex = 1;
+    self.scaleSlider.value = 1.0f;
+    self.scaleValueLabel.text = @"1.0×";
+    [self refreshSizeInfo];
 }
 
 - (void)opacityChanged:(UISlider *)slider {
@@ -416,6 +565,9 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             [[OverlayManager sharedManager] setOverlayImage:img];
             self.imagePreview.image = img;
+            [self refreshSizeInfo];
+            self.scaleSlider.value = (float)[[OverlayManager sharedManager] currentScale];
+            self.scaleValueLabel.text = [NSString stringWithFormat:@"%.1f×", [[OverlayManager sharedManager] currentScale]];
             OLLog(@"Image selected.");
         });
     }];

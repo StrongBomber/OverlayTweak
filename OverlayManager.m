@@ -43,6 +43,9 @@
 @property (nonatomic, assign) BOOL flipH;
 @property (nonatomic, assign) BOOL flipV;
 @property (nonatomic, assign) NSInteger contentModeIndexValue;
+@property (nonatomic, assign) NSInteger sizeModeValue; /* 0 follow image, 1 custom */
+@property (nonatomic, assign) CGFloat customWidthValue;
+@property (nonatomic, assign) CGFloat customHeightValue;
 @property (nonatomic, assign) BOOL menuHidden;
 
 @property (nonatomic, strong) NSUserDefaults *defaults;
@@ -160,6 +163,7 @@
     [self createEdgeTab];
     [self setupGestures];
     [self loadSavedImage];
+    [self syncOverlaySizeAnimated:NO];
     [self installObservers];
 
     _setupCompleted = YES;
@@ -303,8 +307,9 @@
 
 - (void)createOverlayContainer {
     CGRect bounds = self.overlayWindow.bounds;
-    CGFloat w = MAX(160.0, bounds.size.width * 0.55);
-    CGFloat h = MAX(110.0, bounds.size.height * 0.32);
+    CGSize start = [self resolvedOverlaySize];
+    CGFloat w = start.width;
+    CGFloat h = start.height;
 
     OverlayView *view = [[OverlayView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
     view.imageContentMode = [self contentModeFromIndex:_contentModeIndexValue];
@@ -631,6 +636,12 @@
     if (!image) return;
     UIImage *scaled = [self downscaledImage:image maxDimension:2048.0];
     self.overlayView.image = scaled;
+    if (_sizeModeValue == 0) {
+        /* New photo → overlay takes the photo's shape (and native size if it fits). */
+        _currentScaleValue = 1.0;
+        [self applyContainerTransform];
+        [self syncOverlaySizeAnimated:YES];
+    }
     if (self.overlayContainer.hidden && !self.isOverlayVisible) {
         [self showOverlay];
     }
@@ -651,6 +662,7 @@
     [self.overlayView clearImage];
     [[NSFileManager defaultManager] removeItemAtPath:[self imagePath] error:nil];
     [_defaults removeObjectForKey:kDefaultsImageBookmark];
+    if (_sizeModeValue == 0) [self syncOverlaySizeAnimated:YES];
 }
 
 - (UIImage *)currentImage {
@@ -743,6 +755,104 @@
 
 - (NSInteger)contentModeIndex { return _contentModeIndexValue; }
 
+#pragma mark - Size (follow image / custom)
+
+- (NSInteger)sizeMode { return _sizeModeValue; }
+
+- (void)setSizeMode:(NSInteger)mode {
+    _sizeModeValue = (mode == 1) ? 1 : 0;
+    [_defaults setInteger:_sizeModeValue forKey:kDefaultsSizeMode];
+    if (_sizeModeValue == 0) _currentScaleValue = 1.0;
+    [self applyContainerTransform];
+    [self syncOverlaySizeAnimated:YES];
+}
+
+- (CGSize)customSize {
+    return CGSizeMake(_customWidthValue, _customHeightValue);
+}
+
+- (void)setCustomSize:(CGSize)size {
+    size = [self clampSize:size];
+    _customWidthValue = size.width;
+    _customHeightValue = size.height;
+    _sizeModeValue = 1;
+    _currentScaleValue = 1.0;
+    [_defaults setInteger:1 forKey:kDefaultsSizeMode];
+    [_defaults setDouble:_customWidthValue forKey:kDefaultsCustomWidth];
+    [_defaults setDouble:_customHeightValue forKey:kDefaultsCustomHeight];
+    [self applyContainerTransform];
+    [self syncOverlaySizeAnimated:YES];
+}
+
+- (CGSize)currentOverlaySize {
+    if (!self.overlayContainer) return [self resolvedOverlaySize];
+    return self.overlayContainer.bounds.size;
+}
+
+- (CGSize)imageNativeSize {
+    UIImage *img = self.overlayView.image;
+    if (!img) return CGSizeZero;
+    return CGSizeMake(img.size.width * img.scale, img.size.height * img.scale);
+}
+
+- (CGSize)clampSize:(CGSize)size {
+    CGSize screen = self.overlayWindow ? self.overlayWindow.bounds.size : [UIScreen mainScreen].bounds.size;
+    CGFloat maxW = MAX(80.0, screen.width * 1.5);
+    CGFloat maxH = MAX(80.0, screen.height * 1.5);
+    size.width  = MAX(40.0, MIN(maxW, size.width));
+    size.height = MAX(40.0, MIN(maxH, size.height));
+    return size;
+}
+
+- (CGSize)sizeFittingScreen:(CGSize)raw {
+    CGSize screen = self.overlayWindow ? self.overlayWindow.bounds.size : [UIScreen mainScreen].bounds.size;
+    if (raw.width < 1 || raw.height < 1) {
+        return CGSizeMake(220, 220);
+    }
+    /* Keep the photo's exact aspect. Use native pixel size as points when it
+       fits; otherwise scale down uniformly so a 9:16 stays 9:16. Never upscale. */
+    CGFloat maxW = screen.width * 0.92;
+    CGFloat maxH = screen.height * 0.82;
+    CGFloat f = MIN(1.0, MIN(maxW / raw.width, maxH / raw.height));
+    return [self clampSize:CGSizeMake(raw.width * f, raw.height * f)];
+}
+
+- (CGSize)resolvedOverlaySize {
+    if (_sizeModeValue == 1) {
+        return [self clampSize:CGSizeMake(_customWidthValue, _customHeightValue)];
+    }
+    UIImage *img = self.overlayView.image;
+    if (!img) {
+        return CGSizeMake(220, 220);
+    }
+    CGSize pixels = CGSizeMake(img.size.width * img.scale, img.size.height * img.scale);
+    return [self sizeFittingScreen:pixels];
+}
+
+- (void)syncOverlaySizeAnimated:(BOOL)animated {
+    if (!self.overlayContainer) return;
+    CGSize size = [self resolvedOverlaySize];
+    CGPoint center = self.overlayContainer.center;
+    if (center.x == 0 && center.y == 0) {
+        CGRect b = self.overlayWindow.bounds;
+        center = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
+    }
+    CGAffineTransform t = self.overlayContainer.transform;
+    void (^apply)(void) = ^{
+        self.overlayContainer.transform = CGAffineTransformIdentity;
+        self.overlayContainer.bounds = CGRectMake(0, 0, size.width, size.height);
+        self.overlayContainer.center = center;
+        self.overlayContainer.transform = t;
+        [self clampOverlayToScreen];
+    };
+    if (animated) {
+        [UIView animateWithDuration:0.22 animations:apply];
+    } else {
+        apply();
+    }
+    [self scheduleSave];
+}
+
 - (void)resetTransform {
     _currentScaleValue = 1.0;
     _currentRotationValue = 0.0;
@@ -761,6 +871,12 @@
     [self setFlipHorizontal:NO];
     [self setFlipVertical:NO];
     [self setContentModeIndex:0];
+    _sizeModeValue = 0;
+    _customWidthValue = 240.0;
+    _customHeightValue = 240.0;
+    [_defaults setInteger:0 forKey:kDefaultsSizeMode];
+    [_defaults setDouble:_customWidthValue forKey:kDefaultsCustomWidth];
+    [_defaults setDouble:_customHeightValue forKey:kDefaultsCustomHeight];
     [self resetTransform];
     [self clearOverlayImage];
     [self setMenuHidden:NO];
@@ -811,6 +927,12 @@
     _flipH = [_defaults boolForKey:kDefaultsFlipH];
     _flipV = [_defaults boolForKey:kDefaultsFlipV];
     _contentModeIndexValue = [_defaults integerForKey:kDefaultsContentMode];
+    _sizeModeValue = [_defaults integerForKey:kDefaultsSizeMode];
+    if (_sizeModeValue != 1) _sizeModeValue = 0;
+    CGFloat cw = [_defaults doubleForKey:kDefaultsCustomWidth];
+    CGFloat ch = [_defaults doubleForKey:kDefaultsCustomHeight];
+    _customWidthValue = (cw >= 40.0) ? cw : 240.0;
+    _customHeightValue = (ch >= 40.0) ? ch : 240.0;
     _menuHidden = [_defaults boolForKey:kDefaultsMenuHidden];
 }
 
@@ -897,14 +1019,22 @@
 
 #pragma mark - Modal presentation (image picker)
 
-- (void)presentModal:(UIViewController *)viewController {
+- (void)makeOverlayWindowKey {
     if (![NSThread isMainThread]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ [self presentModal:viewController]; });
+        dispatch_async(dispatch_get_main_queue(), ^{ [self makeOverlayWindowKey]; });
         return;
     }
     UIWindow *host = [self findHostWindow];
     if (host && host != self.overlayWindow) self.previousKeyWindow = host;
     [self.overlayWindow makeKeyAndVisible];
+}
+
+- (void)presentModal:(UIViewController *)viewController {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self presentModal:viewController]; });
+        return;
+    }
+    [self makeOverlayWindowKey];
     UIViewController *root = self.overlayWindow.rootViewController;
     while (root.presentedViewController) root = root.presentedViewController;
     [root presentViewController:viewController animated:YES completion:nil];

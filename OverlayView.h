@@ -13,6 +13,8 @@
 @property (nonatomic, assign) BOOL flipHorizontal;
 @property (nonatomic, assign) BOOL flipVertical;
 @property (nonatomic, assign) BOOL showsGrid;
+/// Unit insets 0–0.45 on each edge (contentsRect crop).
+@property (nonatomic, assign) UIEdgeInsets cropInsets;
 
 - (instancetype)initWithFrame:(CGRect)frame image:(UIImage *)image;
 - (void)clearImage;

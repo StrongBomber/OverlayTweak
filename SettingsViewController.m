@@ -30,11 +30,26 @@
 @property (nonatomic, strong) UIButton *customSizeButton;
 @property (nonatomic, strong) UISlider *rotationSlider;
 @property (nonatomic, strong) UILabel *rotationValueLabel;
+@property (nonatomic, strong) UISlider *cropLeftSlider;
+@property (nonatomic, strong) UILabel *cropLeftValueLabel;
+@property (nonatomic, strong) UISlider *cropRightSlider;
+@property (nonatomic, strong) UILabel *cropRightValueLabel;
+@property (nonatomic, strong) UISlider *cropTopSlider;
+@property (nonatomic, strong) UILabel *cropTopValueLabel;
+@property (nonatomic, strong) UISlider *cropBottomSlider;
+@property (nonatomic, strong) UILabel *cropBottomValueLabel;
+@property (nonatomic, strong) UISlider *pitchSlider;
+@property (nonatomic, strong) UILabel *pitchValueLabel;
+@property (nonatomic, strong) UISlider *yawSlider;
+@property (nonatomic, strong) UILabel *yawValueLabel;
 @property (nonatomic, strong) UISwitch *borderSwitch;
 @property (nonatomic, strong) UISwitch *gridSwitch;
 @property (nonatomic, strong) UIButton *toggleOverlayButton;
 @property (nonatomic, strong) UIButton *resetButton;
 @property (nonatomic, assign) BOOL uiBuilt;
+- (CGFloat)addCropSlider:(NSString *)title y:(CGFloat)y sw:(CGFloat)sw p:(CGFloat)p slider:(UISlider **)outSlider label:(UILabel **)outLabel;
+- (CGFloat)addAngleSlider:(NSString *)title y:(CGFloat)y sw:(CGFloat)sw p:(CGFloat)p slider:(UISlider **)outSlider label:(UILabel **)outLabel action:(SEL)action;
+- (void)refreshCropLabels;
 @end
 
 @implementation SettingsViewController
@@ -271,6 +286,36 @@
     [self.contentView addSubview:rotR];
 
     y += 48;
+    [self.contentView addSubview:[self sectionLabel:@"KIRPMA" y:y]];
+    y += 26;
+    y = [self addCropSlider:@"Sol" y:y sw:sw p:p slider:&_cropLeftSlider label:&_cropLeftValueLabel];
+    y = [self addCropSlider:@"Sağ" y:y sw:sw p:p slider:&_cropRightSlider label:&_cropRightValueLabel];
+    y = [self addCropSlider:@"Üst" y:y sw:sw p:p slider:&_cropTopSlider label:&_cropTopValueLabel];
+    y = [self addCropSlider:@"Alt" y:y sw:sw p:p slider:&_cropBottomSlider label:&_cropBottomValueLabel];
+
+    UIButton *resetCrop = [self actionButton:@"Kırpmayı sıfırla"
+                                       frame:CGRectMake(p, y, sw, 32)
+                                       color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                                  titleColor:[UIColor whiteColor]];
+    resetCrop.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    [resetCrop addTarget:self action:@selector(resetCropTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:resetCrop];
+
+    y += 44;
+    [self.contentView addSubview:[self sectionLabel:@"PERSPEKTİF" y:y]];
+    y += 26;
+    y = [self addAngleSlider:@"Pitch X" y:y sw:sw p:p slider:&_pitchSlider label:&_pitchValueLabel action:@selector(pitchChanged:)];
+    y = [self addAngleSlider:@"Yaw Y" y:y sw:sw p:p slider:&_yawSlider label:&_yawValueLabel action:@selector(yawChanged:)];
+
+    UIButton *resetPersp = [self actionButton:@"Perspektifi sıfırla"
+                                        frame:CGRectMake(p, y, sw, 32)
+                                        color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
+                                   titleColor:[UIColor whiteColor]];
+    resetPersp.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    [resetPersp addTarget:self action:@selector(resetPerspectiveTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:resetPersp];
+
+    y += 44;
     [self.contentView addSubview:[self sectionLabel:@"SIĞDIRMA" y:y]];
     y += 26;
 
@@ -473,6 +518,62 @@
     [self.contentView addSubview:sep];
 }
 
+- (CGFloat)addCropSlider:(NSString *)title y:(CGFloat)y sw:(CGFloat)sw p:(CGFloat)p slider:(UISlider **)outSlider label:(UILabel **)outLabel {
+    UILabel *name = [[UILabel alloc] initWithFrame:CGRectMake(p, y, 44, 28)];
+    name.text = title;
+    name.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    name.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.75];
+    [self.contentView addSubview:name];
+
+    UISlider *s = [[UISlider alloc] initWithFrame:CGRectMake(p + 48, y, sw - 48 - 48, 28)];
+    s.minimumValue = 0;
+    s.maximumValue = 0.45f;
+    s.value = 0;
+    s.minimumTrackTintColor = [UIColor systemPurpleColor];
+    s.maximumTrackTintColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2];
+    [s addTarget:self action:@selector(cropChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.contentView addSubview:s];
+
+    UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - p - 44, y, 44, 28)];
+    v.text = @"0%";
+    v.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];
+    v.textColor = [UIColor whiteColor];
+    v.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:v];
+
+    if (outSlider) *outSlider = s;
+    if (outLabel) *outLabel = v;
+    return y + 32;
+}
+
+- (CGFloat)addAngleSlider:(NSString *)title y:(CGFloat)y sw:(CGFloat)sw p:(CGFloat)p slider:(UISlider **)outSlider label:(UILabel **)outLabel action:(SEL)action {
+    UILabel *name = [[UILabel alloc] initWithFrame:CGRectMake(p, y, 64, 28)];
+    name.text = title;
+    name.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    name.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.75];
+    [self.contentView addSubview:name];
+
+    UISlider *s = [[UISlider alloc] initWithFrame:CGRectMake(p + 68, y, sw - 68 - 48, 28)];
+    s.minimumValue = -70.0f;
+    s.maximumValue = 70.0f;
+    s.value = 0;
+    s.minimumTrackTintColor = [UIColor systemYellowColor];
+    s.maximumTrackTintColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2];
+    [s addTarget:self action:action forControlEvents:UIControlEventValueChanged];
+    [self.contentView addSubview:s];
+
+    UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - p - 44, y, 44, 28)];
+    v.text = @"0°";
+    v.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];
+    v.textColor = [UIColor whiteColor];
+    v.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:v];
+
+    if (outSlider) *outSlider = s;
+    if (outLabel) *outLabel = v;
+    return y + 32;
+}
+
 #pragma mark - State
 
 - (void)loadState {
@@ -662,6 +763,52 @@
     while (deg < -180.0) deg += 360.0;
     self.rotationSlider.value = (float)deg;
     self.rotationValueLabel.text = [NSString stringWithFormat:@"%.0f°", deg];
+}
+
+- (void)refreshCropLabels {
+    self.cropLeftValueLabel.text = [NSString stringWithFormat:@"%.0f%%", self.cropLeftSlider.value * 100.0];
+    self.cropRightValueLabel.text = [NSString stringWithFormat:@"%.0f%%", self.cropRightSlider.value * 100.0];
+    self.cropTopValueLabel.text = [NSString stringWithFormat:@"%.0f%%", self.cropTopSlider.value * 100.0];
+    self.cropBottomValueLabel.text = [NSString stringWithFormat:@"%.0f%%", self.cropBottomSlider.value * 100.0];
+}
+
+- (void)cropChanged:(UISlider *)slider {
+    (void)slider;
+    UIEdgeInsets insets = UIEdgeInsetsMake(self.cropTopSlider.value,
+                                           self.cropLeftSlider.value,
+                                           self.cropBottomSlider.value,
+                                           self.cropRightSlider.value);
+    [[OverlayManager sharedManager] setCropInsets:insets];
+    [self refreshCropLabels];
+}
+
+- (void)resetCropTapped {
+    [[OverlayManager sharedManager] resetCrop];
+    self.cropLeftSlider.value = 0;
+    self.cropRightSlider.value = 0;
+    self.cropTopSlider.value = 0;
+    self.cropBottomSlider.value = 0;
+    [self refreshCropLabels];
+}
+
+- (void)pitchChanged:(UISlider *)slider {
+    CGFloat rad = slider.value * (CGFloat)M_PI / 180.0;
+    [[OverlayManager sharedManager] setPitch:rad];
+    self.pitchValueLabel.text = [NSString stringWithFormat:@"%.0f°", slider.value];
+}
+
+- (void)yawChanged:(UISlider *)slider {
+    CGFloat rad = slider.value * (CGFloat)M_PI / 180.0;
+    [[OverlayManager sharedManager] setYaw:rad];
+    self.yawValueLabel.text = [NSString stringWithFormat:@"%.0f°", slider.value];
+}
+
+- (void)resetPerspectiveTapped {
+    [[OverlayManager sharedManager] resetPerspective];
+    self.pitchSlider.value = 0;
+    self.yawSlider.value = 0;
+    self.pitchValueLabel.text = @"0°";
+    self.yawValueLabel.text = @"0°";
 }
 
 - (void)borderChanged:(UISwitch *)sw {

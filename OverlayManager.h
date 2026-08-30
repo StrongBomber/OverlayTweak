@@ -62,6 +62,16 @@
 - (void)setShowsGrid:(BOOL)show;
 - (BOOL)showsGrid;
 
+- (void)setPitch:(CGFloat)pitch;
+- (CGFloat)pitch;
+- (void)setYaw:(CGFloat)yaw;
+- (CGFloat)yaw;
+- (void)resetPerspective;
+
+- (void)setCropInsets:(UIEdgeInsets)insets;
+- (UIEdgeInsets)cropInsets;
+- (void)resetCrop;
+
 - (void)resetTransform;
 - (void)resetAllSettings;
 

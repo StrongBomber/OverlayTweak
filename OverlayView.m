@@ -38,6 +38,7 @@
     _flipHorizontal = NO;
     _flipVertical = NO;
     _showsGrid = NO;
+    _cropInsets = UIEdgeInsetsZero;
 
     self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.28];
     self.clipsToBounds = YES;
@@ -51,6 +52,8 @@
     _imageView.contentMode = _imageContentMode;
     _imageView.backgroundColor = [UIColor clearColor];
     _imageView.opaque = NO;
+    _imageView.clipsToBounds = YES;
+    _imageView.layer.masksToBounds = YES;
     _imageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self addSubview:_imageView];
 
@@ -102,6 +105,7 @@
     self.backgroundColor = image
         ? [UIColor clearColor]
         : [[UIColor blackColor] colorWithAlphaComponent:0.28];
+    [self applyCrop];
     if (image) {
         _imageView.alpha = 0;
         [UIView animateWithDuration:0.18 animations:^{ self->_imageView.alpha = 1; }];
@@ -113,6 +117,7 @@
     _imageView.image = nil;
     _placeholderLabel.hidden = NO;
     self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.28];
+    _imageView.layer.contentsRect = CGRectMake(0, 0, 1, 1);
 }
 
 - (void)setCornerRadius:(CGFloat)c {
@@ -146,6 +151,23 @@
     if (show) [self updateGrid];
 }
 
+- (void)setCropInsets:(UIEdgeInsets)insets {
+    insets.left   = MAX(0, MIN(0.45, insets.left));
+    insets.right  = MAX(0, MIN(0.45, insets.right));
+    insets.top    = MAX(0, MIN(0.45, insets.top));
+    insets.bottom = MAX(0, MIN(0.45, insets.bottom));
+    _cropInsets = insets;
+    [self applyCrop];
+}
+
+- (void)applyCrop {
+    CGFloat l = _cropInsets.left;
+    CGFloat t = _cropInsets.top;
+    CGFloat w = MAX(0.10, 1.0 - l - _cropInsets.right);
+    CGFloat h = MAX(0.10, 1.0 - t - _cropInsets.bottom);
+    _imageView.layer.contentsRect = CGRectMake(l, t, w, h);
+}
+
 - (void)updateGrid {
     if (!_showsGrid) return;
     CGRect b = self.bounds;
@@ -171,6 +193,7 @@
     [super layoutSubviews];
     _imageView.frame = self.bounds;
     _placeholderLabel.frame = self.bounds;
+    [self applyCrop];
     [self updateGrid];
 }
 

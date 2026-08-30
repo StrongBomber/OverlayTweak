@@ -86,8 +86,18 @@ def main() -> int:
     # OverlayView grid API
     if "showsGrid" not in view_h:
         errors.append("OverlayView.h missing showsGrid")
+    if "cropInsets" not in view_h:
+        errors.append("OverlayView.h missing cropInsets")
+    if "contentsRect" not in view_m:
+        errors.append("OverlayView.m missing contentsRect crop")
     if "CAShapeLayer" in view_m and "<QuartzCore/QuartzCore.h>" not in view_m:
         errors.append("OverlayView.m uses CAShapeLayer without QuartzCore")
+    if "CATransform3D" not in mgr_m:
+        errors.append("OverlayManager.m missing CATransform3D perspective")
+    if "kDefaultsPitch" not in common or "kDefaultsCropL" not in common:
+        errors.append("OverlayCommon.h missing pitch/crop defaults keys")
+    if "1.4.0" not in common:
+        errors.append("OverlayCommon.h version is not 1.4.0")
 
     # Brace balance (rough)
     for name, src in (

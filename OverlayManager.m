@@ -50,6 +50,9 @@
 @property (nonatomic, assign) CGFloat customHeightValue;
 @property (nonatomic, assign) BOOL showsBorderValue;
 @property (nonatomic, assign) BOOL showsGridValue;
+@property (nonatomic, assign) CGFloat pitchValue;
+@property (nonatomic, assign) CGFloat yawValue;
+@property (nonatomic, assign) UIEdgeInsets cropInsetsValue;
 @property (nonatomic, assign) BOOL menuHidden;
 
 @property (nonatomic, strong) NSUserDefaults *defaults;
@@ -129,6 +132,9 @@
         _customHeightValue = 240.0;
         _showsBorderValue = YES;
         _showsGridValue = NO;
+        _pitchValue = 0;
+        _yawValue = 0;
+        _cropInsetsValue = UIEdgeInsetsZero;
         _isOverlayVisible = NO;
         _isLocked = NO;
         _isSettingsVisible = NO;
@@ -326,6 +332,8 @@
     view.flipVertical = _flipV;
     view.showsBorder = _showsBorderValue;
     view.showsGrid = _showsGridValue;
+    view.cropInsets = _cropInsetsValue;
+    view.layer.allowsEdgeAntialiasing = YES;
 
     if (_currentPosition.x != 0 || _currentPosition.y != 0) {
         view.center = _currentPosition;
@@ -334,9 +342,6 @@
         _currentPosition = view.center;
     }
 
-    view.transform = CGAffineTransformConcat(
-        CGAffineTransformMakeScale(_currentScaleValue, _currentScaleValue),
-        CGAffineTransformMakeRotation(_currentRotationValue));
     view.alpha = _currentOpacityValue;
     view.hidden = YES;
     [view setLockedAppearance:_isLocked];
@@ -344,6 +349,7 @@
     [self.overlayWindow.rootViewController.view addSubview:view];
     self.overlayView = view;
     self.overlayContainer = view;
+    [self applyContainerTransform];
     [self clampOverlayToScreen];
 }
 
@@ -482,9 +488,19 @@
 }
 
 - (void)applyContainerTransform {
-    self.overlayContainer.transform = CGAffineTransformConcat(
-        CGAffineTransformMakeScale(_currentScaleValue, _currentScaleValue),
-        CGAffineTransformMakeRotation(_currentRotationValue));
+    if (!self.overlayContainer) return;
+    /* 2D affine and 3D layer transforms fight — keep UIView.transform identity. */
+    self.overlayContainer.transform = CGAffineTransformIdentity;
+    CATransform3D t = CATransform3DIdentity;
+    t.m34 = -1.0 / 700.0;
+    t = CATransform3DRotate(t, _pitchValue, 1, 0, 0);
+    t = CATransform3DRotate(t, _yawValue, 0, 1, 0);
+    t = CATransform3DRotate(t, _currentRotationValue, 0, 0, 1);
+    t = CATransform3DScale(t, _currentScaleValue, _currentScaleValue, 1);
+    self.overlayContainer.layer.transform = t;
+    BOOL perspectiveOn = (fabs(_pitchValue) > 0.001 || fabs(_yawValue) > 0.001);
+    self.overlayContainer.layer.shouldRasterize = !perspectiveOn;
+    self.overlayContainer.layer.rasterizationScale = [UIScreen mainScreen].scale;
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)g {
@@ -858,12 +874,12 @@
         CGRect b = self.overlayWindow.bounds;
         center = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
     }
-    CGAffineTransform t = self.overlayContainer.transform;
+    CATransform3D t = self.overlayContainer.layer.transform;
     void (^apply)(void) = ^{
-        self.overlayContainer.transform = CGAffineTransformIdentity;
+        self.overlayContainer.layer.transform = CATransform3DIdentity;
         self.overlayContainer.bounds = CGRectMake(0, 0, size.width, size.height);
         self.overlayContainer.center = center;
-        self.overlayContainer.transform = t;
+        self.overlayContainer.layer.transform = t;
         [self clampOverlayToScreen];
     };
     if (animated) {
@@ -930,9 +946,50 @@
 
 - (BOOL)showsGrid { return _showsGridValue; }
 
+- (void)setPitch:(CGFloat)pitch {
+    _pitchValue = MAX(-1.2, MIN(1.2, pitch));
+    [self applyContainerTransform];
+    [self scheduleSave];
+}
+
+- (CGFloat)pitch { return _pitchValue; }
+
+- (void)setYaw:(CGFloat)yaw {
+    _yawValue = MAX(-1.2, MIN(1.2, yaw));
+    [self applyContainerTransform];
+    [self scheduleSave];
+}
+
+- (CGFloat)yaw { return _yawValue; }
+
+- (void)resetPerspective {
+    _pitchValue = 0;
+    _yawValue = 0;
+    [self applyContainerTransform];
+    [self scheduleSave];
+}
+
+- (void)setCropInsets:(UIEdgeInsets)insets {
+    insets.left   = MAX(0, MIN(0.45, insets.left));
+    insets.right  = MAX(0, MIN(0.45, insets.right));
+    insets.top    = MAX(0, MIN(0.45, insets.top));
+    insets.bottom = MAX(0, MIN(0.45, insets.bottom));
+    _cropInsetsValue = insets;
+    self.overlayView.cropInsets = insets;
+    [self scheduleSave];
+}
+
+- (UIEdgeInsets)cropInsets { return _cropInsetsValue; }
+
+- (void)resetCrop {
+    [self setCropInsets:UIEdgeInsetsZero];
+}
+
 - (void)resetTransform {
     _currentScaleValue = 1.0;
     _currentRotationValue = 0.0;
+    _pitchValue = 0;
+    _yawValue = 0;
     CGRect b = self.overlayWindow.bounds;
     _currentPosition = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
     [UIView animateWithDuration:0.2 animations:^{
@@ -956,6 +1013,8 @@
     [_defaults setDouble:_customHeightValue forKey:kDefaultsCustomHeight];
     [self setShowsBorder:YES];
     [self setShowsGrid:NO];
+    [self resetCrop];
+    [self resetPerspective];
     [self resetTransform];
     [self clearOverlayImage];
     [self setMenuHidden:NO];
@@ -977,6 +1036,12 @@
     [_defaults setDouble:_currentPosition.y forKey:kDefaultsPositionY];
     [_defaults setDouble:_currentScaleValue forKey:kDefaultsScale];
     [_defaults setDouble:_currentRotationValue forKey:kDefaultsRotation];
+    [_defaults setDouble:_pitchValue forKey:kDefaultsPitch];
+    [_defaults setDouble:_yawValue forKey:kDefaultsYaw];
+    [_defaults setDouble:_cropInsetsValue.left forKey:kDefaultsCropL];
+    [_defaults setDouble:_cropInsetsValue.right forKey:kDefaultsCropR];
+    [_defaults setDouble:_cropInsetsValue.top forKey:kDefaultsCropT];
+    [_defaults setDouble:_cropInsetsValue.bottom forKey:kDefaultsCropB];
     [_defaults setBool:_isLocked forKey:kDefaultsIsLocked];
     [_defaults setBool:_flipH forKey:kDefaultsFlipH];
     [_defaults setBool:_flipV forKey:kDefaultsFlipV];
@@ -1002,6 +1067,13 @@
     _currentScaleValue = [_defaults doubleForKey:kDefaultsScale];
     if (_currentScaleValue == 0.0) _currentScaleValue = 1.0;
     _currentRotationValue = [_defaults doubleForKey:kDefaultsRotation];
+    _pitchValue = MAX(-1.2, MIN(1.2, [_defaults doubleForKey:kDefaultsPitch]));
+    _yawValue = MAX(-1.2, MIN(1.2, [_defaults doubleForKey:kDefaultsYaw]));
+    _cropInsetsValue = UIEdgeInsetsMake(
+        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropT])),
+        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropL])),
+        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropB])),
+        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropR])));
     _isLocked = [_defaults boolForKey:kDefaultsIsLocked];
     _flipH = [_defaults boolForKey:kDefaultsFlipH];
     _flipV = [_defaults boolForKey:kDefaultsFlipV];

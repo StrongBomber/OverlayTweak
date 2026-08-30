@@ -167,9 +167,17 @@ def main() -> int:
             errors.append(f"{name}: suspiciously few brackets")
 
     check_workflow(ROOT / "ci" / "build.yml", "ci/build.yml")
+    # .github/workflows cannot be pushed by this token; ci/build.yml is the
+    # canonical copy. If the GitHub file was already corrected, check it too.
     wf = ROOT / ".github" / "workflows" / "build.yml"
     if wf.exists():
-        check_workflow(wf, ".github/workflows/build.yml")
+        raw = wf.read_text(encoding="utf-8")
+        broken = ("arena/**" in raw and "'arena/**'" not in raw and '"arena/**"' not in raw) or "checkout@v5" in raw
+        if broken:
+            print("NOTE: .github/workflows/build.yml is the GitHub copy that cannot be pushed.")
+            print("      Paste ci/build.yml over it on GitHub so Actions will run.")
+        else:
+            check_workflow(wf, ".github/workflows/build.yml")
 
     if errors:
         print("FAIL")

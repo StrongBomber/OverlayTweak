@@ -33,6 +33,7 @@ enum {
 @property (nonatomic, strong) NSArray<UIView *> *cropHandles;
 @property (nonatomic, strong) NSArray<UIView *> *warpHandles;
 @property (nonatomic, strong) NSArray<UIView *> *perspHandles;
+@property (nonatomic, assign) CGRect cropAnchorWinRect;
 @end
 
 @implementation OverlayView
@@ -292,6 +293,10 @@ enum {
     self.warpPoints = [[self class] identityWarpPoints];
 }
 
+- (UIEdgeInsets)clampedCropInsets:(UIEdgeInsets)insets {
+    return [self clampedInsets:insets];
+}
+
 - (UIEdgeInsets)clampedInsets:(UIEdgeInsets)insets {
     insets.left   = MAX(0, insets.left);
     insets.right  = MAX(0, insets.right);
@@ -501,16 +506,29 @@ enum {
     if (!_cropModeEnabled) return;
     CGSize base = [self effectiveUncroppedSize];
     if (base.width < 1 || base.height < 1) return;
-    CGPoint t = [g translationInView:self];
-    [g setTranslation:CGPointZero inView:self];
+
+    /* Anchor the uncropped image in window space at gesture start so later
+       bounds/center updates cannot feed back into the drag. Remaining pixels
+       stay put; only the pulled edge moves. */
+    if (g.state == UIGestureRecognizerStateBegan) {
+        CGRect local = CGRectMake(-_cropInsets.left * base.width,
+                                  -_cropInsets.top * base.height,
+                                  base.width, base.height);
+        _cropAnchorWinRect = [self convertRect:local toView:nil];
+        return;
+    }
+    CGRect wr = _cropAnchorWinRect;
+    if (wr.size.width < 1 || wr.size.height < 1) return;
+
+    CGPoint p = [g locationInView:nil];
+    CGFloat u = (p.x - wr.origin.x) / wr.size.width;
+    CGFloat v = (p.y - wr.origin.y) / wr.size.height;
     UIEdgeInsets insets = _cropInsets;
     NSInteger tag = g.view.tag;
-    CGFloat dx = t.x / base.width;
-    CGFloat dy = t.y / base.height;
-    if (tag == kOLHandleL || tag == kOLHandleTL || tag == kOLHandleBL) insets.left += dx;
-    if (tag == kOLHandleR || tag == kOLHandleTR || tag == kOLHandleBR) insets.right -= dx;
-    if (tag == kOLHandleT || tag == kOLHandleTL || tag == kOLHandleTR) insets.top += dy;
-    if (tag == kOLHandleB || tag == kOLHandleBL || tag == kOLHandleBR) insets.bottom -= dy;
+    if (tag == kOLHandleL || tag == kOLHandleTL || tag == kOLHandleBL) insets.left = u;
+    if (tag == kOLHandleR || tag == kOLHandleTR || tag == kOLHandleBR) insets.right = 1.0 - u;
+    if (tag == kOLHandleT || tag == kOLHandleTL || tag == kOLHandleTR) insets.top = v;
+    if (tag == kOLHandleB || tag == kOLHandleBL || tag == kOLHandleBR) insets.bottom = 1.0 - v;
     insets = [self clampedInsets:insets];
     if ([self.cropDelegate respondsToSelector:@selector(overlayView:didChangeCropInsets:)]) {
         [self.cropDelegate overlayView:self didChangeCropInsets:insets];

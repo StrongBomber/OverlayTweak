@@ -41,6 +41,7 @@
 - (void)setLockedAppearance:(BOOL)locked;
 - (BOOL)isCropHandleView:(UIView *)view;
 - (CGSize)croppedSize;
+- (UIEdgeInsets)clampedCropInsets:(UIEdgeInsets)insets;
 - (void)resetWarp;
 
 @end

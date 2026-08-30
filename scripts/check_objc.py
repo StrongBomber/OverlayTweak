@@ -142,8 +142,12 @@ def main() -> int:
         errors.append("OverlayView.m missing warp handles")
     if "perspectiveModeEnabled" not in view_h:
         errors.append("OverlayView.h missing perspectiveModeEnabled")
-    if "menuLongPressed" not in mgr_m or "showQuickMenu" not in mgr_m:
-        errors.append("OverlayManager.m missing long-press quick menu")
+    if "- (void)menuLongPressed" not in mgr_m or "showQuickMenu" not in mgr_m:
+        errors.append("OverlayManager.m missing long-press quick menu method")
+    if "cropAnchorWinRect" not in view_m:
+        errors.append("OverlayView.m missing stable crop-drag anchor")
+    if "clampedCropInsets" not in view_h:
+        errors.append("OverlayView.h missing clampedCropInsets")
     if "CoreImage" not in view_m:
         errors.append("OverlayView.m missing CoreImage warp")
 

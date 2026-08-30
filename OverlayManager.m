@@ -458,9 +458,22 @@
 }
 
 - (void)menuTapped {
-    if (_cropModeEnabled) [self endCropMode];
+    if (_quickMenuOpen) {
+        [self hideQuickMenu];
+        return;
+    }
+    [self endAllEditModes];
     if (self.isSettingsVisible) [self hideSettingsPanel];
     else [self showSettingsPanel];
+}
+
+- (void)menuLongPressed:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    if (!self.menuButton || self.menuButton.hidden) return;
+    [self menuUnhighlight];
+    if (self.isSettingsVisible) [self hideSettingsPanel];
+    if (_quickMenuOpen) [self hideQuickMenu];
+    else [self showQuickMenu];
 }
 
 - (void)edgeTabTapped {
@@ -551,6 +564,7 @@
 }
 
 - (void)layoutQuickButtonsFromHub:(BOOL)collapsed {
+    if (!self.menuButton || self.quickButtons.count == 0) return;
     CGPoint hub = self.menuButton.center;
     CGRect b = self.overlayWindow.bounds;
     CGFloat R = collapsed ? 0 : 86.0;
@@ -870,6 +884,7 @@
 
 - (void)toggleOverlay {
     self.isOverlayVisible ? [self hideOverlay] : [self showOverlay];
+    [self refreshQuickButtonFaces];
 }
 
 #pragma mark - Image
@@ -985,6 +1000,8 @@
     _isLocked = locked;
     [self.overlayView setLockedAppearance:locked];
     [_defaults setBool:locked forKey:kDefaultsIsLocked];
+    if (locked) [self endAllEditModes];
+    [self refreshQuickButtonFaces];
 }
 
 - (void)toggleLock { [self setLocked:!self.isLocked]; }
@@ -1215,35 +1232,28 @@
         base = [self resolvedOverlaySize];
         self.overlayView.uncroppedSize = base;
     }
+    insets = [self.overlayView clampedCropInsets:insets];
     UIEdgeInsets old = _cropInsetsValue;
-    self.overlayView.cropInsets = insets;
-    insets = self.overlayView.cropInsets;
-    CGSize newSize = [self.overlayView croppedSize];
+    CGFloat w = MAX(40.0, base.width * (1.0 - insets.left - insets.right));
+    CGFloat h = MAX(40.0, base.height * (1.0 - insets.top - insets.bottom));
 
     UIView *view = self.overlayContainer;
     CATransform3D t = view.layer.transform;
     view.layer.transform = CATransform3DIdentity;
 
-    CGPoint keepSuper = CGPointZero;
-    if (keep && view.superview) {
-        CGPoint local = CGPointMake((insets.left - old.left) * base.width,
-                                    (insets.top - old.top) * base.height);
-        keepSuper = [view convertPoint:local toView:view.superview];
+    CGPoint origin = CGPointMake(view.center.x - view.bounds.size.width * 0.5,
+                                 view.center.y - view.bounds.size.height * 0.5);
+    if (keep) {
+        origin.x += (insets.left - old.left) * base.width;
+        origin.y += (insets.top - old.top) * base.height;
     }
-
-    view.bounds = CGRectMake(0, 0, newSize.width, newSize.height);
-
-    if (keep && view.superview) {
-        CGPoint newTL = [view convertPoint:CGPointZero toView:view.superview];
-        CGPoint c = view.center;
-        c.x += keepSuper.x - newTL.x;
-        c.y += keepSuper.y - newTL.y;
-        view.center = c;
-        _currentPosition = c;
-    }
-
+    view.bounds = CGRectMake(0, 0, w, h);
+    view.center = CGPointMake(origin.x + w * 0.5, origin.y + h * 0.5);
     view.layer.transform = t;
+
     _cropInsetsValue = insets;
+    self.overlayView.cropInsets = insets;
+    _currentPosition = view.center;
     [self scheduleSave];
 }
 

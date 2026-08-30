@@ -1,8 +1,10 @@
-# Copy to .github/workflows/build.yml if the GitHub App cannot update workflows.
+# Mirror of .github/workflows/build.yml — paste there if the GitHub App
+# cannot update workflow files (missing `workflows` permission).
 name: Build Overlay.dylib
 
 on:
   push:
+    branches: [main, arena/**]
   pull_request:
   workflow_dispatch:
 
@@ -16,24 +18,35 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - name: Select Xcode
+      - name: Setup Xcode
         run: |
           set -euo pipefail
           if [ -d /Applications/Xcode.app ]; then
             sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           else
-            sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)/Contents/Developer"
+            newest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+            if [ -z "${newest}" ]; then
+              echo "ERROR: no Xcode.app found"
+              ls /Applications || true
+              exit 1
+            fi
+            sudo xcode-select -s "${newest}/Contents/Developer"
           fi
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
-      - run: python3 scripts/check_objc.py
+          sudo xcodebuild -license accept 2>/dev/null || true
+      - name: Check sources
+        run: make check
       - name: Build
         run: |
           set -euo pipefail
           export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
-          make clean && make
+          make clean
+          make
           test -f Overlay.dylib
+          ls -lh Overlay.dylib
           lipo -info Overlay.dylib
+          otool -hv Overlay.dylib | sed -n '1,20p'
       - uses: actions/upload-artifact@v4
         with:
           name: Overlay.dylib

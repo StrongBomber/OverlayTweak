@@ -99,6 +99,12 @@ def main() -> int:
         errors.append("OverlayManager.m contains corrupted pinchGestureeRecognizer fragment")
     if "toggleOvert:" in settings or "toggleOvert:0" in settings:
         errors.append("SettingsViewController.m contains corrupted selector toggleOvert")
+    if re.search(r":&_", settings):
+        errors.append("SettingsViewController.m: &_ivar out-param is an ARC compile error")
+    if "UISlider **" in settings or "UILabel **" in settings:
+        errors.append("SettingsViewController.m: ** out-param is an ARC compile error")
+    if "bind:^(UISlider" not in settings:
+        errors.append("SettingsViewController.m: addNamedSlider should bind sliders via a block")
     if mgr_m.count("\n@end") < 3:
         errors.append("OverlayManager.m is missing expected @end markers")
     if not mgr_m.rstrip().endswith("@end"):

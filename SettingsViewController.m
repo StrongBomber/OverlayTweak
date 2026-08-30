@@ -51,12 +51,11 @@
                        sw:(CGFloat)sw
                         p:(CGFloat)p
                     color:(UIColor *)color
-                      min:(float)min
-                      max:(float)max
+                      min:(float)minValue
+                      max:(float)maxValue
                    action:(SEL)action
-                   slider:(UISlider **)outSlider
-                    label:(UILabel **)outLabel
-                    unit:(NSString *)unit;
+                     unit:(NSString *)unit
+                     bind:(void (^)(UISlider *slider, UILabel *valueLabel))bind;
 - (void)refreshCropLabels;
 - (void)tick;
 @end
@@ -216,7 +215,10 @@
     y = [self section:@"GÖRÜNÜRLÜK" y:y];
     y = [self addNamedSlider:@"Opaklık" y:y sw:sw p:p color:[UIColor systemBlueColor]
                          min:0.05f max:1.0f action:@selector(opacityChanged:)
-                      slider:&_opacitySlider label:&_opacityValueLabel unit:@"%"];
+                        unit:@"%" bind:^(UISlider *s, UILabel *l) {
+                            self.opacitySlider = s;
+                            self.opacityValueLabel = l;
+                        }];
     NSArray *opPresets = @[@"25%", @"50%", @"75%", @"100%"];
     CGFloat opw = (sw - 18) / 4.0;
     for (NSInteger i = 0; i < 4; i++) {
@@ -232,13 +234,19 @@
     y += 40;
     y = [self addNamedSlider:@"Ölçek" y:y sw:sw p:p color:[UIColor systemTealColor]
                          min:0.2f max:4.0f action:@selector(scaleChanged:)
-                      slider:&_scaleSlider label:&_scaleValueLabel unit:@"×"];
+                        unit:@"×" bind:^(UISlider *s, UILabel *l) {
+                            self.scaleSlider = s;
+                            self.scaleValueLabel = l;
+                        }];
 
     /* DÖNDÜRME */
     y = [self section:@"DÖNDÜRME" y:y];
     y = [self addNamedSlider:@"Z ekseni" y:y sw:sw p:p color:[UIColor systemOrangeColor]
                          min:-180.0f max:180.0f action:@selector(rotationChanged:)
-                      slider:&_rotationSlider label:&_rotationValueLabel unit:@"°"];
+                        unit:@"°" bind:^(UISlider *s, UILabel *l) {
+                            self.rotationSlider = s;
+                            self.rotationValueLabel = l;
+                        }];
     UIButton *rotL = [self actionButton:@"↺  −90°"
                                   frame:CGRectMake(p, y, (sw - 8) / 2, 38)
                                   color:[[UIColor whiteColor] colorWithAlphaComponent:0.10]
@@ -272,16 +280,28 @@
     y += 38;
     y = [self addNamedSlider:@"Sol" y:y sw:sw p:p color:[UIColor systemPurpleColor]
                          min:0 max:0.80f action:@selector(cropChanged:)
-                      slider:&_cropLeftSlider label:&_cropLeftValueLabel unit:@"%"];
+                        unit:@"%" bind:^(UISlider *s, UILabel *l) {
+                            self.cropLeftSlider = s;
+                            self.cropLeftValueLabel = l;
+                        }];
     y = [self addNamedSlider:@"Sağ" y:y sw:sw p:p color:[UIColor systemPurpleColor]
                          min:0 max:0.80f action:@selector(cropChanged:)
-                      slider:&_cropRightSlider label:&_cropRightValueLabel unit:@"%"];
+                        unit:@"%" bind:^(UISlider *s, UILabel *l) {
+                            self.cropRightSlider = s;
+                            self.cropRightValueLabel = l;
+                        }];
     y = [self addNamedSlider:@"Üst" y:y sw:sw p:p color:[UIColor systemPurpleColor]
                          min:0 max:0.80f action:@selector(cropChanged:)
-                      slider:&_cropTopSlider label:&_cropTopValueLabel unit:@"%"];
+                        unit:@"%" bind:^(UISlider *s, UILabel *l) {
+                            self.cropTopSlider = s;
+                            self.cropTopValueLabel = l;
+                        }];
     y = [self addNamedSlider:@"Alt" y:y sw:sw p:p color:[UIColor systemPurpleColor]
                          min:0 max:0.80f action:@selector(cropChanged:)
-                      slider:&_cropBottomSlider label:&_cropBottomValueLabel unit:@"%"];
+                        unit:@"%" bind:^(UISlider *s, UILabel *l) {
+                            self.cropBottomSlider = s;
+                            self.cropBottomValueLabel = l;
+                        }];
     UIButton *resetCrop = [self actionButton:@"Kırpmayı sıfırla"
                                        frame:CGRectMake(p, y, sw, 34)
                                        color:[[UIColor whiteColor] colorWithAlphaComponent:0.08]
@@ -295,10 +315,16 @@
     y = [self section:@"PERSPEKTİF" y:y];
     y = [self addNamedSlider:@"Pitch X" y:y sw:sw p:p color:[UIColor systemYellowColor]
                          min:-70.0f max:70.0f action:@selector(pitchChanged:)
-                      slider:&_pitchSlider label:&_pitchValueLabel unit:@"°"];
+                        unit:@"°" bind:^(UISlider *s, UILabel *l) {
+                            self.pitchSlider = s;
+                            self.pitchValueLabel = l;
+                        }];
     y = [self addNamedSlider:@"Yaw Y" y:y sw:sw p:p color:[UIColor systemYellowColor]
                          min:-70.0f max:70.0f action:@selector(yawChanged:)
-                      slider:&_yawSlider label:&_yawValueLabel unit:@"°"];
+                        unit:@"°" bind:^(UISlider *s, UILabel *l) {
+                            self.yawSlider = s;
+                            self.yawValueLabel = l;
+                        }];
     UIButton *resetPersp = [self actionButton:@"Perspektifi sıfırla"
                                         frame:CGRectMake(p, y, sw, 34)
                                         color:[[UIColor whiteColor] colorWithAlphaComponent:0.08]
@@ -502,12 +528,11 @@
                        sw:(CGFloat)sw
                         p:(CGFloat)p
                     color:(UIColor *)color
-                      min:(float)min
-                      max:(float)max
+                      min:(float)minValue
+                      max:(float)maxValue
                    action:(SEL)action
-                   slider:(UISlider **)outSlider
-                    label:(UILabel **)outLabel
-                    unit:(NSString *)unit {
+                     unit:(NSString *)unit
+                     bind:(void (^)(UISlider *slider, UILabel *valueLabel))bind {
     UILabel *name = [[UILabel alloc] initWithFrame:CGRectMake(p, y, 72, 18)];
     name.text = title;
     name.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
@@ -522,17 +547,15 @@
     [self.contentView addSubview:v];
 
     UISlider *s = [[UISlider alloc] initWithFrame:CGRectMake(p, y + 18, sw, 28)];
-    s.minimumValue = min;
-    s.maximumValue = max;
-    s.value = min > 0 ? min : 0;
+    s.minimumValue = minValue;
+    s.maximumValue = maxValue;
+    s.value = minValue > 0 ? minValue : 0;
     s.minimumTrackTintColor = color;
     s.maximumTrackTintColor = [[UIColor whiteColor] colorWithAlphaComponent:0.18];
     [s addTarget:self action:action forControlEvents:UIControlEventValueChanged];
     [self.contentView addSubview:s];
 
-    if (outSlider) *outSlider = s;
-    if (outLabel) *outLabel = v;
-    (void)unit;
+    if (bind) bind(s, v);
     return y + 50;
 }
 

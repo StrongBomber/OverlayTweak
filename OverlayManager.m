@@ -388,7 +388,8 @@
 
     [btn addTarget:self action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
     [btn addTarget:self action:@selector(menuHighlight) forControlEvents:UIControlEventTouchDown];
-    [btn addTarget:self action:@selector(menuUnhighlight) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+    [btn addTarget:self action:@selector(menuUnhighlight)
+  forControlEvents:(UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel)];
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(menuDragged:)];
     [btn addGestureRecognizer:pan];
 

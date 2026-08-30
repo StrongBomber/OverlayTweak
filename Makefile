@@ -9,6 +9,9 @@ TARGET_NAME = Overlay.dylib
 MIN_IOS     = 14.0
 
 SDK := $(shell xcrun --sdk iphoneos --show-sdk-path 2>/dev/null)
+ifeq ($(strip $(SDK)),)
+SDK := $(SDKROOT)
+endif
 CC   = xcrun -sdk iphoneos clang
 
 SOURCES = OverlayEntry.m OverlayManager.m OverlayView.m SettingsViewController.m

@@ -203,7 +203,7 @@
     }
 
     if (![_defaults boolForKey:kDefaultsWelcomeShown]) {
-        [self showToast:@"Overlay hazır — ⚙️ menü"];
+        [self showToast:[NSString stringWithFormat:@"Overlay v%@  ·  ⚙️ menü", kOLVersion]];
         [_defaults setBool:YES forKey:kDefaultsWelcomeShown];
     }
 }
@@ -362,7 +362,7 @@
 #pragma mark - Menu
 
 - (void)createMenuButton {
-    CGFloat size = 48.0;
+    CGFloat size = 52.0;
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
     btn.frame = CGRectMake(0, 0, size, size);
     btn.accessibilityLabel = @"Overlay menü";
@@ -379,8 +379,16 @@
     [btn setTitle:@"⚙️" forState:UIControlStateNormal];
     btn.titleLabel.font = [UIFont systemFontOfSize:22];
     btn.layer.cornerRadius = size / 2.0;
+    btn.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    btn.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.28].CGColor;
+    btn.layer.shadowColor = [UIColor blackColor].CGColor;
+    btn.layer.shadowOpacity = 0.45;
+    btn.layer.shadowRadius = 10;
+    btn.layer.shadowOffset = CGSizeMake(0, 4);
 
     [btn addTarget:self action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
+    [btn addTarget:self action:@selector(menuHighlight) forControlEvents:UIControlEventTouchDown];
+    [btn addTarget:self action:@selector(menuUnhighlight) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(menuDragged:)];
     [btn addGestureRecognizer:pan];
 
@@ -401,12 +409,14 @@
 
 - (void)createEdgeTab {
     UIButton *tab = [UIButton buttonWithType:UIButtonTypeCustom];
-    tab.frame = CGRectMake(0, 0, 22, 44);
-    tab.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.45];
-    tab.layer.cornerRadius = 8;
+    tab.frame = CGRectMake(0, 0, 26, 52);
+    tab.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.62];
+    tab.layer.cornerRadius = 10;
     tab.layer.maskedCorners = kCALayerMaxXMinYCorner | kCALayerMaxXMaxYCorner;
+    tab.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    tab.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.18].CGColor;
     [tab setTitle:@"⚙" forState:UIControlStateNormal];
-    tab.titleLabel.font = [UIFont systemFontOfSize:12];
+    tab.titleLabel.font = [UIFont systemFontOfSize:14];
     tab.hidden = YES;
     [tab addTarget:self action:@selector(edgeTabTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.overlayWindow.rootViewController.view addSubview:tab];
@@ -422,6 +432,18 @@
     if (self.edgeTab.center.y > b.size.height) {
         self.edgeTab.center = CGPointMake(11 + inset.left, b.size.height * 0.3);
     }
+}
+
+- (void)menuHighlight {
+    [UIView animateWithDuration:0.12 animations:^{
+        self.menuButton.transform = CGAffineTransformMakeScale(0.90, 0.90);
+    }];
+}
+
+- (void)menuUnhighlight {
+    [UIView animateWithDuration:0.18 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.4 options:0 animations:^{
+        self.menuButton.transform = CGAffineTransformIdentity;
+    } completion:nil];
 }
 
 - (void)menuTapped {
@@ -1082,35 +1104,58 @@
 - (void)showCropBar {
     [self.cropBar removeFromSuperview];
     UIView *root = self.overlayWindow.rootViewController.view;
-    CGFloat w = MIN(320.0, root.bounds.size.width - 24.0);
-    CGFloat h = 48.0;
+    CGFloat w = MIN(340.0, root.bounds.size.width - 24.0);
+    CGFloat h = 56.0;
     UIEdgeInsets inset = self.overlayWindow.safeAreaInsets;
     UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
-    bar.center = CGPointMake(CGRectGetMidX(root.bounds), root.bounds.size.height - inset.bottom - 28 - h * 0.5);
-    bar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.82];
-    bar.layer.cornerRadius = 14;
+    bar.center = CGPointMake(CGRectGetMidX(root.bounds), root.bounds.size.height - inset.bottom - 22 - h * 0.5);
+    bar.backgroundColor = [[UIColor colorWithWhite:0.08 alpha:0.92] colorWithAlphaComponent:0.92];
+    bar.layer.cornerRadius = 16;
+    bar.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    bar.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.16].CGColor;
+    bar.layer.shadowColor = [UIColor blackColor].CGColor;
+    bar.layer.shadowOpacity = 0.4;
+    bar.layer.shadowRadius = 16;
+    bar.layer.shadowOffset = CGSizeMake(0, 6);
     bar.userInteractionEnabled = YES;
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(14, 0, w - 110, h)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, w - 188, h)];
     title.text = @"Kırpma";
     title.textColor = [UIColor whiteColor];
-    title.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    title.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     [bar addSubview:title];
 
+    UIButton *reset = [UIButton buttonWithType:UIButtonTypeSystem];
+    reset.frame = CGRectMake(w - 176, 12, 78, 32);
+    [reset setTitle:@"Sıfırla" forState:UIControlStateNormal];
+    [reset setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    reset.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    reset.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
+    reset.layer.cornerRadius = 10;
+    reset.exclusiveTouch = YES;
+    [reset addTarget:self action:@selector(resetCrop) forControlEvents:UIControlEventTouchUpInside];
+    [bar addSubview:reset];
+
     UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
-    done.frame = CGRectMake(w - 96, 8, 82, 32);
+    done.frame = CGRectMake(w - 90, 12, 78, 32);
     [done setTitle:@"Tamam" forState:UIControlStateNormal];
     [done setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    done.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    done.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     done.backgroundColor = [UIColor systemBlueColor];
-    done.layer.cornerRadius = 8;
+    done.layer.cornerRadius = 10;
     done.exclusiveTouch = YES;
     [done addTarget:self action:@selector(endCropMode) forControlEvents:UIControlEventTouchUpInside];
     [bar addSubview:done];
 
+    bar.alpha = 0;
+    bar.transform = CGAffineTransformMakeTranslation(0, 12);
     [root addSubview:bar];
     [root bringSubviewToFront:bar];
     self.cropBar = bar;
+    [UIView animateWithDuration:0.28 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0.4 options:0 animations:^{
+        bar.alpha = 1;
+        bar.transform = CGAffineTransformIdentity;
+    } completion:nil];
 }
 
 - (void)hideCropBar {
@@ -1244,7 +1289,7 @@
 
     UIView *dim = [[UIView alloc] initWithFrame:root.view.bounds];
     dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    dim.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.45];
+    dim.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.55];
     dim.alpha = 0;
     dim.userInteractionEnabled = YES;
 
@@ -1254,16 +1299,21 @@
     [dim addGestureRecognizer:tap];
     self.settingsContainerView = dim;
 
-    CGFloat pw = MIN(340.0, CGRectGetWidth(root.view.bounds) - 28.0);
-    CGFloat ph = MIN(540.0, CGRectGetHeight(root.view.bounds) - 56.0);
+    CGFloat pw = MIN(368.0, CGRectGetWidth(root.view.bounds) - 20.0);
+    CGFloat ph = MIN(680.0, CGRectGetHeight(root.view.bounds) - 40.0);
     self.settingsVC.view.frame = CGRectMake(0, 0, pw, ph);
     self.settingsVC.view.center = CGPointMake(CGRectGetMidX(dim.bounds), CGRectGetMidY(dim.bounds));
     self.settingsVC.view.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin |
                                             UIViewAutoresizingFlexibleRightMargin |
                                             UIViewAutoresizingFlexibleTopMargin |
                                             UIViewAutoresizingFlexibleBottomMargin;
-    self.settingsVC.view.layer.cornerRadius = 16;
-    self.settingsVC.view.clipsToBounds = YES;
+    self.settingsVC.view.layer.cornerRadius = 22;
+    self.settingsVC.view.clipsToBounds = NO;
+    self.settingsVC.view.layer.shadowColor = [UIColor blackColor].CGColor;
+    self.settingsVC.view.layer.shadowOpacity = 0.45;
+    self.settingsVC.view.layer.shadowRadius = 28;
+    self.settingsVC.view.layer.shadowOffset = CGSizeMake(0, 12);
+    self.settingsVC.view.transform = CGAffineTransformMakeScale(0.94, 0.94);
 
     [root addChildViewController:self.settingsVC];
     [dim addSubview:self.settingsVC.view];
@@ -1274,7 +1324,10 @@
 
     [self.settingsVC.view layoutIfNeeded];
 
-    [UIView animateWithDuration:0.22 animations:^{ dim.alpha = 1.0; }];
+    [UIView animateWithDuration:0.32 delay:0 usingSpringWithDamping:0.84 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        dim.alpha = 1.0;
+        self.settingsVC.view.transform = CGAffineTransformIdentity;
+    } completion:nil];
     self.isSettingsVisible = YES;
 }
 
@@ -1296,6 +1349,7 @@
 
     [UIView animateWithDuration:0.2 animations:^{
         dim.alpha = 0;
+        vc.view.transform = CGAffineTransformMakeScale(0.96, 0.96);
     } completion:^(__unused BOOL f) {
         [vc willMoveToParentViewController:nil];
         [vc.view removeFromSuperview];
@@ -1367,8 +1421,10 @@
     CGFloat pad = 14;
     CGRect lf = label.frame;
     UIView *box = [[UIView alloc] initWithFrame:CGRectInset(lf, -pad, -8)];
-    box.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.78];
-    box.layer.cornerRadius = 12;
+    box.backgroundColor = [[UIColor colorWithWhite:0.08 alpha:1] colorWithAlphaComponent:0.92];
+    box.layer.cornerRadius = 14;
+    box.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    box.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.14].CGColor;
     label.center = CGPointMake(CGRectGetMidX(box.bounds), CGRectGetMidY(box.bounds));
     label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [box addSubview:label];

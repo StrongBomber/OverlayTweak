@@ -8,6 +8,7 @@ iOS dylib overlay for sideloaded / TrollStore apps. Inject `Overlay.dylib` into 
 - Passthrough hit-testing: locked overlay and empty space go to the game.
 - PHPicker image import (no `NSPhotoLibraryUsageDescription` required) + paste from clipboard.
 - Overlay frame follows the photo (9:16 stays 9:16, 500×500 stays square). Custom W×H in settings, plus 1:1 / 9:16 / 16:9 / 4:3 / 3:4 presets.
+- Card-based settings panel (v1.6): live sliders, crop handles/guides, 3D pitch/yaw, spring presentation.
 - Rotation slider / ±90°, 1pt & 10pt nudge, snap to center/edges, border & alignment grid, opacity presets, long-press to lock.
 - Opacity, scale, rotation (pinch / rotate / sliders), flip H/V, aspect fit/fill/stretch.
 - Lock mode, hide/show overlay, hide menu (edge tab remains).

@@ -83,11 +83,11 @@ enum {
     [_clipView addSubview:_imageView];
 
     _placeholderLabel = [[UILabel alloc] initWithFrame:_clipView.bounds];
-    _placeholderLabel.text = @"Görsel seçin\n⚙️ menü";
+    _placeholderLabel.text = @"Görsel seçin\nmenüden ⚙️";
     _placeholderLabel.textAlignment = NSTextAlignmentCenter;
     _placeholderLabel.numberOfLines = 2;
-    _placeholderLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    _placeholderLabel.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.7];
+    _placeholderLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    _placeholderLabel.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.72];
     _placeholderLabel.userInteractionEnabled = NO;
     [_clipView addSubview:_placeholderLabel];
 
@@ -128,11 +128,11 @@ enum {
     hit.hidden = YES;
     hit.userInteractionEnabled = YES;
 
-    UIView *knob = [[UIView alloc] initWithFrame:CGRectMake(6, 6, 16, 16)];
+    UIView *knob = [[UIView alloc] initWithFrame:CGRectMake(7, 7, 18, 18)];
     knob.backgroundColor = [UIColor whiteColor];
     knob.userInteractionEnabled = NO;
-    knob.layer.cornerRadius = 3;
-    knob.layer.borderWidth = 1.2;
+    knob.layer.cornerRadius = 9;
+    knob.layer.borderWidth = 2.0;
     knob.layer.borderColor = [UIColor colorWithRed:0.25 green:0.55 blue:1.0 alpha:1].CGColor;
     knob.layer.shadowColor = [UIColor blackColor].CGColor;
     knob.layer.shadowOpacity = 0.5;
@@ -334,7 +334,21 @@ enum {
 - (void)layoutCropChrome {
     CGRect b = self.bounds;
     _cropFrameLayer.frame = b;
-    _cropFrameLayer.path = [UIBezierPath bezierPathWithRect:CGRectInset(b, 1, 1)].CGPath;
+    UIBezierPath *frame = [UIBezierPath bezierPathWithRect:CGRectInset(b, 1, 1)];
+    CGFloat tick = 18.0;
+    [frame moveToPoint:CGPointMake(1, tick)];
+    [frame addLineToPoint:CGPointMake(1, 1)];
+    [frame addLineToPoint:CGPointMake(tick, 1)];
+    [frame moveToPoint:CGPointMake(b.size.width - tick, 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, tick)];
+    [frame moveToPoint:CGPointMake(1, b.size.height - tick)];
+    [frame addLineToPoint:CGPointMake(1, b.size.height - 1)];
+    [frame addLineToPoint:CGPointMake(tick, b.size.height - 1)];
+    [frame moveToPoint:CGPointMake(b.size.width - tick, b.size.height - 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - tick)];
+    _cropFrameLayer.path = frame.CGPath;
 
     UIBezierPath *guides = [UIBezierPath bezierPath];
     for (NSInteger i = 1; i <= 2; i++) {

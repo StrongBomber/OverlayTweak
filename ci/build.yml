@@ -1,5 +1,5 @@
-# Copy this file over .github/workflows/build.yml on GitHub if git push
-# is rejected (the token has no `workflows` permission).
+# Copy over .github/workflows/build.yml on GitHub if git push is rejected
+# (the token has no `workflows` permission).
 name: Build Overlay.dylib
 
 on:

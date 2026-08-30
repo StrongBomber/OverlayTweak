@@ -71,6 +71,9 @@
 - (void)setCropInsets:(UIEdgeInsets)insets;
 - (UIEdgeInsets)cropInsets;
 - (void)resetCrop;
+- (void)beginCropMode;
+- (void)endCropMode;
+- (BOOL)isCropModeEnabled;
 
 - (void)resetTransform;
 - (void)resetAllSettings;

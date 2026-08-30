@@ -88,16 +88,26 @@ def main() -> int:
         errors.append("OverlayView.h missing showsGrid")
     if "cropInsets" not in view_h:
         errors.append("OverlayView.h missing cropInsets")
-    if "contentsRect" not in view_m:
-        errors.append("OverlayView.m missing contentsRect crop")
+    if "uncroppedSize" not in view_h:
+        errors.append("OverlayView.h missing uncroppedSize")
+    if "cropModeEnabled" not in view_h:
+        errors.append("OverlayView.h missing cropModeEnabled")
+    if "cropHandles" not in view_m:
+        errors.append("OverlayView.m missing crop handles")
+    if "cropGuideLayer" not in view_m:
+        errors.append("OverlayView.m missing crop guides")
+    if "keepPosition" not in mgr_m:
+        errors.append("OverlayManager.m missing keepPosition crop")
+    if "beginCropMode" not in mgr_h:
+        errors.append("OverlayManager.h missing beginCropMode")
     if "CAShapeLayer" in view_m and "<QuartzCore/QuartzCore.h>" not in view_m:
         errors.append("OverlayView.m uses CAShapeLayer without QuartzCore")
     if "CATransform3D" not in mgr_m:
         errors.append("OverlayManager.m missing CATransform3D perspective")
     if "kDefaultsPitch" not in common or "kDefaultsCropL" not in common:
         errors.append("OverlayCommon.h missing pitch/crop defaults keys")
-    if "1.4.0" not in common:
-        errors.append("OverlayCommon.h version is not 1.4.0")
+    if "1.5.0" not in common:
+        errors.append("OverlayCommon.h version is not 1.5.0")
 
     # Brace balance (rough)
     for name, src in (

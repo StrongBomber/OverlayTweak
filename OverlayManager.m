@@ -20,7 +20,7 @@
 
 #pragma mark - Private interface (must be first so the window can call us)
 
-@interface OverlayManager () <UIGestureRecognizerDelegate>
+@interface OverlayManager () <UIGestureRecognizerDelegate, OverlayViewCropDelegate>
 
 @property (nonatomic, strong, readwrite) UIWindow *overlayWindow;
 @property (nonatomic, strong, readwrite) UIView *overlayContainer;
@@ -53,6 +53,8 @@
 @property (nonatomic, assign) CGFloat pitchValue;
 @property (nonatomic, assign) CGFloat yawValue;
 @property (nonatomic, assign) UIEdgeInsets cropInsetsValue;
+@property (nonatomic, assign) BOOL cropModeEnabled;
+@property (nonatomic, strong) UIView *cropBar;
 @property (nonatomic, assign) BOOL menuHidden;
 
 @property (nonatomic, strong) NSUserDefaults *defaults;
@@ -332,8 +334,12 @@
     view.flipVertical = _flipV;
     view.showsBorder = _showsBorderValue;
     view.showsGrid = _showsGridValue;
+    view.uncroppedSize = start;
     view.cropInsets = _cropInsetsValue;
+    view.cropDelegate = self;
     view.layer.allowsEdgeAntialiasing = YES;
+    CGSize cropped = [view croppedSize];
+    view.bounds = CGRectMake(0, 0, cropped.width, cropped.height);
 
     if (_currentPosition.x != 0 || _currentPosition.y != 0) {
         view.center = _currentPosition;
@@ -419,6 +425,7 @@
 }
 
 - (void)menuTapped {
+    if (_cropModeEnabled) [self endCropMode];
     if (self.isSettingsVisible) [self hideSettingsPanel];
     else [self showSettingsPanel];
 }
@@ -484,6 +491,12 @@
     if (g.view == self.settingsContainerView) {
         return t.view == self.settingsContainerView;
     }
+    if (_cropModeEnabled && (g == self.panGesture || g == self.pinchGesture || g == self.rotationGesture)) {
+        return NO;
+    }
+    if (_cropModeEnabled && [self.overlayView isCropHandleView:t.view]) {
+        return NO;
+    }
     return YES;
 }
 
@@ -499,12 +512,12 @@
     t = CATransform3DScale(t, _currentScaleValue, _currentScaleValue, 1);
     self.overlayContainer.layer.transform = t;
     BOOL perspectiveOn = (fabs(_pitchValue) > 0.001 || fabs(_yawValue) > 0.001);
-    self.overlayContainer.layer.shouldRasterize = !perspectiveOn;
+    self.overlayContainer.layer.shouldRasterize = !perspectiveOn && !_cropModeEnabled;
     self.overlayContainer.layer.rasterizationScale = [UIScreen mainScreen].scale;
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)g {
-    if (self.isLocked) return;
+    if (self.isLocked || _cropModeEnabled) return;
     UIView *v = g.view;
     CGPoint t = [g translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
@@ -517,7 +530,7 @@
 }
 
 - (void)handlePinch:(UIPinchGestureRecognizer *)g {
-    if (self.isLocked) return;
+    if (self.isLocked || _cropModeEnabled) return;
     if (g.state == UIGestureRecognizerStateChanged) {
         _currentScaleValue = MAX(0.15, MIN(6.0, _currentScaleValue * g.scale));
         [self applyContainerTransform];
@@ -527,7 +540,7 @@
 }
 
 - (void)handleRotation:(UIRotationGestureRecognizer *)g {
-    if (self.isLocked) return;
+    if (self.isLocked || _cropModeEnabled) return;
     if (g.state == UIGestureRecognizerStateChanged) {
         _currentRotationValue += g.rotation;
         [self applyContainerTransform];
@@ -537,12 +550,13 @@
 }
 
 - (void)handleDoubleTap:(UITapGestureRecognizer *)g {
-    if (self.isLocked) return;
+    if (self.isLocked || _cropModeEnabled) return;
     [self resetTransform];
     [self showToast:@"Konum sıfırlandı"];
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)g {
+    if (_cropModeEnabled) return;
     if (g.state != UIGestureRecognizerStateBegan) return;
     [self toggleLock];
     [self showToast:self.isLocked ? @"Kilitlendi — dokunmalar oyuna geçer" : @"Kilit açıldı"];
@@ -574,8 +588,15 @@
     UIWindow *win = self.overlayWindow;
     if (!win) return nil;
 
-    if (!self.isOverlayVisible && !self.isSettingsVisible && self.menuButton.hidden && self.edgeTab.hidden) {
+    if (!self.isOverlayVisible && !self.isSettingsVisible && self.menuButton.hidden && self.edgeTab.hidden && !self.cropBar) {
         return nil;
+    }
+
+    if (self.cropBar && !self.cropBar.hidden) {
+        CGPoint p = [win convertPoint:point toView:self.cropBar];
+        if ([self.cropBar pointInside:p withEvent:event]) {
+            return [self.cropBar hitTest:p withEvent:event];
+        }
     }
 
     if (self.menuButton && !self.menuButton.hidden) {
@@ -868,7 +889,10 @@
 
 - (void)syncOverlaySizeAnimated:(BOOL)animated {
     if (!self.overlayContainer) return;
-    CGSize size = [self resolvedOverlaySize];
+    CGSize base = [self resolvedOverlaySize];
+    self.overlayView.uncroppedSize = base;
+    self.overlayView.cropInsets = _cropInsetsValue;
+    CGSize size = [self.overlayView croppedSize];
     CGPoint center = self.overlayContainer.center;
     if (center.x == 0 && center.y == 0) {
         CGRect b = self.overlayWindow.bounds;
@@ -970,19 +994,128 @@
 }
 
 - (void)setCropInsets:(UIEdgeInsets)insets {
-    insets.left   = MAX(0, MIN(0.45, insets.left));
-    insets.right  = MAX(0, MIN(0.45, insets.right));
-    insets.top    = MAX(0, MIN(0.45, insets.top));
-    insets.bottom = MAX(0, MIN(0.45, insets.bottom));
-    _cropInsetsValue = insets;
+    [self applyCropInsets:insets keepPosition:YES];
+}
+
+- (void)applyCropInsets:(UIEdgeInsets)insets keepPosition:(BOOL)keep {
+    if (!self.overlayView) {
+        _cropInsetsValue = insets;
+        return;
+    }
+    CGSize base = self.overlayView.uncroppedSize;
+    if (base.width < 40 || base.height < 40) {
+        base = [self resolvedOverlaySize];
+        self.overlayView.uncroppedSize = base;
+    }
+    UIEdgeInsets old = _cropInsetsValue;
     self.overlayView.cropInsets = insets;
+    insets = self.overlayView.cropInsets;
+    CGSize newSize = [self.overlayView croppedSize];
+
+    UIView *view = self.overlayContainer;
+    CATransform3D t = view.layer.transform;
+    view.layer.transform = CATransform3DIdentity;
+
+    CGPoint keepSuper = CGPointZero;
+    if (keep && view.superview) {
+        CGPoint local = CGPointMake((insets.left - old.left) * base.width,
+                                    (insets.top - old.top) * base.height);
+        keepSuper = [view convertPoint:local toView:view.superview];
+    }
+
+    view.bounds = CGRectMake(0, 0, newSize.width, newSize.height);
+
+    if (keep && view.superview) {
+        CGPoint newTL = [view convertPoint:CGPointZero toView:view.superview];
+        CGPoint c = view.center;
+        c.x += keepSuper.x - newTL.x;
+        c.y += keepSuper.y - newTL.y;
+        view.center = c;
+        _currentPosition = c;
+    }
+
+    view.layer.transform = t;
+    _cropInsetsValue = insets;
     [self scheduleSave];
 }
 
 - (UIEdgeInsets)cropInsets { return _cropInsetsValue; }
 
 - (void)resetCrop {
-    [self setCropInsets:UIEdgeInsetsZero];
+    [self applyCropInsets:UIEdgeInsetsZero keepPosition:YES];
+}
+
+- (void)overlayView:(OverlayView *)view didChangeCropInsets:(UIEdgeInsets)insets {
+    (void)view;
+    [self applyCropInsets:insets keepPosition:YES];
+}
+
+- (void)beginCropMode {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self beginCropMode]; });
+        return;
+    }
+    if (self.isLocked) {
+        [self showToast:@"Önce kilidi açın"];
+        return;
+    }
+    if (self.isSettingsVisible) [self hideSettingsPanel];
+    if (!self.isOverlayVisible) [self showOverlay];
+    _cropModeEnabled = YES;
+    self.overlayView.cropModeEnabled = YES;
+    [self applyContainerTransform];
+    [self showCropBar];
+    [self showToast:@"Tutamaçları sürükleyerek kırpın"];
+}
+
+- (void)endCropMode {
+    if (!_cropModeEnabled) return;
+    _cropModeEnabled = NO;
+    self.overlayView.cropModeEnabled = NO;
+    [self applyContainerTransform];
+    [self hideCropBar];
+    [self saveCurrentState];
+}
+
+- (BOOL)isCropModeEnabled { return _cropModeEnabled; }
+
+- (void)showCropBar {
+    [self.cropBar removeFromSuperview];
+    UIView *root = self.overlayWindow.rootViewController.view;
+    CGFloat w = MIN(320.0, root.bounds.size.width - 24.0);
+    CGFloat h = 48.0;
+    UIEdgeInsets inset = self.overlayWindow.safeAreaInsets;
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
+    bar.center = CGPointMake(CGRectGetMidX(root.bounds), root.bounds.size.height - inset.bottom - 28 - h * 0.5);
+    bar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.82];
+    bar.layer.cornerRadius = 14;
+    bar.userInteractionEnabled = YES;
+
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(14, 0, w - 110, h)];
+    title.text = @"Kırpma";
+    title.textColor = [UIColor whiteColor];
+    title.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    [bar addSubview:title];
+
+    UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
+    done.frame = CGRectMake(w - 96, 8, 82, 32);
+    [done setTitle:@"Tamam" forState:UIControlStateNormal];
+    [done setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    done.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    done.backgroundColor = [UIColor systemBlueColor];
+    done.layer.cornerRadius = 8;
+    done.exclusiveTouch = YES;
+    [done addTarget:self action:@selector(endCropMode) forControlEvents:UIControlEventTouchUpInside];
+    [bar addSubview:done];
+
+    [root addSubview:bar];
+    [root bringSubviewToFront:bar];
+    self.cropBar = bar;
+}
+
+- (void)hideCropBar {
+    [self.cropBar removeFromSuperview];
+    self.cropBar = nil;
 }
 
 - (void)resetTransform {
@@ -1013,6 +1146,7 @@
     [_defaults setDouble:_customHeightValue forKey:kDefaultsCustomHeight];
     [self setShowsBorder:YES];
     [self setShowsGrid:NO];
+    [self endCropMode];
     [self resetCrop];
     [self resetPerspective];
     [self resetTransform];
@@ -1070,10 +1204,10 @@
     _pitchValue = MAX(-1.2, MIN(1.2, [_defaults doubleForKey:kDefaultsPitch]));
     _yawValue = MAX(-1.2, MIN(1.2, [_defaults doubleForKey:kDefaultsYaw]));
     _cropInsetsValue = UIEdgeInsetsMake(
-        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropT])),
-        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropL])),
-        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropB])),
-        MAX(0, MIN(0.45, [_defaults doubleForKey:kDefaultsCropR])));
+        MAX(0, MIN(0.80, [_defaults doubleForKey:kDefaultsCropT])),
+        MAX(0, MIN(0.80, [_defaults doubleForKey:kDefaultsCropL])),
+        MAX(0, MIN(0.80, [_defaults doubleForKey:kDefaultsCropB])),
+        MAX(0, MIN(0.80, [_defaults doubleForKey:kDefaultsCropR])));
     _isLocked = [_defaults boolForKey:kDefaultsIsLocked];
     _flipH = [_defaults boolForKey:kDefaultsFlipH];
     _flipV = [_defaults boolForKey:kDefaultsFlipV];

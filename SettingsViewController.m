@@ -288,6 +288,23 @@
     y += 48;
     [self.contentView addSubview:[self sectionLabel:@"KIRPMA" y:y]];
     y += 26;
+
+    UIButton *cropModeBtn = [self actionButton:@"✂  Tutamaçlarla kırp"
+                                         frame:CGRectMake(p, y, sw, 40)
+                                         color:[UIColor systemPurpleColor]
+                                    titleColor:[UIColor whiteColor]];
+    [cropModeBtn addTarget:self action:@selector(cropModeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:cropModeBtn];
+
+    y += 44;
+    UILabel *cropHint = [[UILabel alloc] initWithFrame:CGRectMake(p, y, sw, 36)];
+    cropHint.text = @"Çerçeve, kılavuz ve tutamaçlar overlay üzerinde çıkar. Kalan görsel yerinde kalır.";
+    cropHint.font = [UIFont systemFontOfSize:11];
+    cropHint.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.45];
+    cropHint.numberOfLines = 2;
+    [self.contentView addSubview:cropHint];
+
+    y += 40;
     y = [self addCropSlider:@"Sol" y:y sw:sw p:p slider:&_cropLeftSlider label:&_cropLeftValueLabel];
     y = [self addCropSlider:@"Sağ" y:y sw:sw p:p slider:&_cropRightSlider label:&_cropRightValueLabel];
     y = [self addCropSlider:@"Üst" y:y sw:sw p:p slider:&_cropTopSlider label:&_cropTopValueLabel];
@@ -594,6 +611,18 @@
     self.rotationValueLabel.text = [NSString stringWithFormat:@"%.0f°", deg];
     self.borderSwitch.on = [mgr showsBorder];
     self.gridSwitch.on = [mgr showsGrid];
+    UIEdgeInsets crop = [mgr cropInsets];
+    self.cropLeftSlider.value = (float)crop.left;
+    self.cropRightSlider.value = (float)crop.right;
+    self.cropTopSlider.value = (float)crop.top;
+    self.cropBottomSlider.value = (float)crop.bottom;
+    [self refreshCropLabels];
+    CGFloat pitchDeg = [mgr pitch] * 180.0 / M_PI;
+    CGFloat yawDeg = [mgr yaw] * 180.0 / M_PI;
+    self.pitchSlider.value = (float)pitchDeg;
+    self.yawSlider.value = (float)yawDeg;
+    self.pitchValueLabel.text = [NSString stringWithFormat:@"%.0f°", pitchDeg];
+    self.yawValueLabel.text = [NSString stringWithFormat:@"%.0f°", yawDeg];
     [self refreshSizeInfo];
 }
 
@@ -782,6 +811,10 @@
     [self refreshCropLabels];
 }
 
+- (void)cropModeTapped {
+    [[OverlayManager sharedManager] beginCropMode];
+}
+
 - (void)resetCropTapped {
     [[OverlayManager sharedManager] resetCrop];
     self.cropLeftSlider.value = 0;
@@ -876,6 +909,10 @@
     self.scaleValueLabel.text = @"1.0×";
     self.rotationSlider.value = 0;
     self.rotationValueLabel.text = @"0°";
+    self.pitchSlider.value = 0;
+    self.yawSlider.value = 0;
+    self.pitchValueLabel.text = @"0°";
+    self.yawValueLabel.text = @"0°";
 }
 
 - (void)resetTapped {

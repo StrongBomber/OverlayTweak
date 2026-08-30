@@ -132,8 +132,20 @@ def main() -> int:
         errors.append("OverlayManager.m missing CATransform3D perspective")
     if "kDefaultsPitch" not in common or "kDefaultsCropL" not in common:
         errors.append("OverlayCommon.h missing pitch/crop defaults keys")
-    if "1.6.0" not in common:
-        errors.append("OverlayCommon.h version is not 1.6.0")
+    if "1.7.0" not in common:
+        errors.append("OverlayCommon.h version is not 1.7.0")
+    if "kDefaultsWarpPts" not in common:
+        errors.append("OverlayCommon.h missing warp defaults key")
+    if "beginWarpMode" not in mgr_h or "beginPerspectiveMode" not in mgr_h:
+        errors.append("OverlayManager.h missing warp/perspective mode")
+    if "warpHandles" not in view_m or "layoutWarpChrome" not in view_m:
+        errors.append("OverlayView.m missing warp handles")
+    if "perspectiveModeEnabled" not in view_h:
+        errors.append("OverlayView.h missing perspectiveModeEnabled")
+    if "menuLongPressed" not in mgr_m or "showQuickMenu" not in mgr_m:
+        errors.append("OverlayManager.m missing long-press quick menu")
+    if "CoreImage" not in view_m:
+        errors.append("OverlayView.m missing CoreImage warp")
 
     # UI contract
     for needle, where in (
@@ -144,8 +156,12 @@ def main() -> int:
         ("addNamedSlider", settings),
         ("menuHighlight", mgr_m),
         ("usingSpringWithDamping", mgr_m),
-        ("showCropBar", mgr_m),
+        ("showEditBarTitle", mgr_m),
         ("layoutCropChrome", view_m),
+        ("layoutWarpChrome", view_m),
+        ("Tutamaçlarla perspektif", settings),
+        ("Warp tutamaçları", settings),
+        ("showQuickMenu", mgr_m),
     ):
         if needle not in where:
             errors.append(f"UI missing {needle}")
@@ -158,7 +174,7 @@ def main() -> int:
         for s in sels:
             seen[s] = seen.get(s, 0) + 1
         for s, n in seen.items():
-            if n > 1 and s not in {"init", "gestureRecognizer"}:
+            if n > 1 and s not in {"init", "gestureRecognizer", "overlayView"}:
                 errors.append(f"OverlayManager.m duplicate method {s} ({n})")
 
     for name, src in (
@@ -193,7 +209,7 @@ def main() -> int:
     print("OK: sources look consistent")
     print(f"  Settings properties: {len(declared)}")
     print(f"  OverlayManager public selectors: {len(public)}")
-    print(f"  Version: 1.6.0")
+    print(f"  Version: 1.7.0")
     print("  Workflow YAML: valid")
     return 0
 

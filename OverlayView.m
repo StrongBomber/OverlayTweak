@@ -1,12 +1,14 @@
 /**
  * OverlayView.m
  *
- * Crop is a window into the uncropped image: the view shrinks from the
- * dragged edge and the image is offset so remaining pixels stay put.
+ * Crop is a window into the uncropped image.
+ * Warp is a Photoshop-style 3×3 mesh (corners = distort).
+ * Perspective mode exposes crop-like edge handles that drive pitch/yaw.
  */
 
 #import "OverlayView.h"
 #import <QuartzCore/QuartzCore.h>
+#import <CoreImage/CoreImage.h>
 
 enum {
     kOLHandleL = 1,
@@ -26,10 +28,35 @@ enum {
 @property (nonatomic, strong) CAShapeLayer *gridLayer;
 @property (nonatomic, strong) CAShapeLayer *cropFrameLayer;
 @property (nonatomic, strong) CAShapeLayer *cropGuideLayer;
+@property (nonatomic, strong) CAShapeLayer *warpGridLayer;
+@property (nonatomic, strong) CAShapeLayer *perspFrameLayer;
 @property (nonatomic, strong) NSArray<UIView *> *cropHandles;
+@property (nonatomic, strong) NSArray<UIView *> *warpHandles;
+@property (nonatomic, strong) NSArray<UIView *> *perspHandles;
 @end
 
 @implementation OverlayView
+
++ (NSArray<NSValue *> *)identityWarpPoints {
+    NSMutableArray *a = [NSMutableArray arrayWithCapacity:9];
+    for (NSInteger r = 0; r < 3; r++) {
+        for (NSInteger c = 0; c < 3; c++) {
+            [a addObject:[NSValue valueWithCGPoint:CGPointMake(c / 2.0, r / 2.0)]];
+        }
+    }
+    return a;
+}
+
++ (BOOL)warpPointsAreIdentity:(NSArray<NSValue *> *)points {
+    if (points.count != 9) return YES;
+    NSArray *idPts = [self identityWarpPoints];
+    for (NSInteger i = 0; i < 9; i++) {
+        CGPoint a = [points[i] CGPointValue];
+        CGPoint b = [idPts[i] CGPointValue];
+        if (fabs(a.x - b.x) > 0.001 || fabs(a.y - b.y) > 0.001) return NO;
+    }
+    return YES;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
@@ -59,6 +86,9 @@ enum {
     _cropInsets = UIEdgeInsetsZero;
     _uncroppedSize = CGSizeZero;
     _cropModeEnabled = NO;
+    _warpModeEnabled = NO;
+    _perspectiveModeEnabled = NO;
+    _warpPoints = [[self class] identityWarpPoints];
 
     self.backgroundColor = [UIColor clearColor];
     self.clipsToBounds = NO;
@@ -98,31 +128,48 @@ enum {
     _gridLayer.hidden = YES;
     [_clipView.layer addSublayer:_gridLayer];
 
-    _cropFrameLayer = [CAShapeLayer layer];
-    _cropFrameLayer.fillColor = [UIColor clearColor].CGColor;
-    _cropFrameLayer.strokeColor = [UIColor colorWithWhite:1.0 alpha:0.95].CGColor;
-    _cropFrameLayer.lineWidth = 2.0;
-    _cropFrameLayer.hidden = YES;
-    [self.layer addSublayer:_cropFrameLayer];
+    _cropFrameLayer = [self makeShapeStroke:[UIColor colorWithWhite:1 alpha:0.95] width:2.0 dashed:NO];
+    _cropGuideLayer = [self makeShapeStroke:[UIColor colorWithWhite:1 alpha:0.55] width:1.0 / [UIScreen mainScreen].scale dashed:YES];
+    _warpGridLayer = [self makeShapeStroke:[UIColor colorWithRed:1 green:0.55 blue:0.2 alpha:0.95] width:1.5 dashed:NO];
+    _perspFrameLayer = [self makeShapeStroke:[UIColor colorWithRed:1 green:0.84 blue:0.2 alpha:0.95] width:2.0 dashed:NO];
 
-    _cropGuideLayer = [CAShapeLayer layer];
-    _cropGuideLayer.fillColor = [UIColor clearColor].CGColor;
-    _cropGuideLayer.strokeColor = [UIColor colorWithWhite:1.0 alpha:0.55].CGColor;
-    _cropGuideLayer.lineWidth = 1.0 / [UIScreen mainScreen].scale;
-    _cropGuideLayer.lineDashPattern = @[ @4, @3 ];
-    _cropGuideLayer.hidden = YES;
-    [self.layer addSublayer:_cropGuideLayer];
+    UIColor *cropBlue = [UIColor colorWithRed:0.25 green:0.55 blue:1.0 alpha:1];
+    UIColor *warpOrange = [UIColor colorWithRed:1.0 green:0.48 blue:0.16 alpha:1];
+    UIColor *perspYellow = [UIColor colorWithRed:1.0 green:0.84 blue:0.18 alpha:1];
 
-    NSMutableArray *handles = [NSMutableArray array];
+    NSMutableArray *crop = [NSMutableArray array];
     for (NSInteger tag = kOLHandleL; tag <= kOLHandleBR; tag++) {
-        [handles addObject:[self makeHandle:tag]];
+        [crop addObject:[self makeHandle:tag color:cropBlue action:@selector(handleCropPan:)]];
     }
-    _cropHandles = handles;
+    _cropHandles = crop;
+
+    NSMutableArray *warp = [NSMutableArray array];
+    for (NSInteger i = 0; i < 9; i++) {
+        [warp addObject:[self makeHandle:i color:warpOrange action:@selector(handleWarpPan:)]];
+    }
+    _warpHandles = warp;
+
+    NSMutableArray *persp = [NSMutableArray array];
+    for (NSInteger tag = kOLHandleL; tag <= kOLHandleBR; tag++) {
+        [persp addObject:[self makeHandle:tag color:perspYellow action:@selector(handlePerspPan:)]];
+    }
+    _perspHandles = persp;
 
     [self updateAppearance];
 }
 
-- (UIView *)makeHandle:(NSInteger)tag {
+- (CAShapeLayer *)makeShapeStroke:(UIColor *)color width:(CGFloat)w dashed:(BOOL)dashed {
+    CAShapeLayer *l = [CAShapeLayer layer];
+    l.fillColor = [UIColor clearColor].CGColor;
+    l.strokeColor = color.CGColor;
+    l.lineWidth = w;
+    l.hidden = YES;
+    if (dashed) l.lineDashPattern = @[ @4, @3 ];
+    [self.layer addSublayer:l];
+    return l;
+}
+
+- (UIView *)makeHandle:(NSInteger)tag color:(UIColor *)color action:(SEL)action {
     UIView *hit = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 28, 28)];
     hit.tag = tag;
     hit.hidden = YES;
@@ -133,14 +180,14 @@ enum {
     knob.userInteractionEnabled = NO;
     knob.layer.cornerRadius = 9;
     knob.layer.borderWidth = 2.0;
-    knob.layer.borderColor = [UIColor colorWithRed:0.25 green:0.55 blue:1.0 alpha:1].CGColor;
+    knob.layer.borderColor = color.CGColor;
     knob.layer.shadowColor = [UIColor blackColor].CGColor;
     knob.layer.shadowOpacity = 0.5;
     knob.layer.shadowRadius = 2.5;
     knob.layer.shadowOffset = CGSizeMake(0, 1);
     [hit addSubview:knob];
 
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleCropPan:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:action];
     pan.maximumNumberOfTouches = 1;
     [hit addGestureRecognizer:pan];
     [self addSubview:hit];
@@ -171,12 +218,11 @@ enum {
 
 - (void)setImage:(UIImage *)image {
     _image = image;
-    _imageView.image = image;
     _placeholderLabel.hidden = (image != nil);
     _clipView.backgroundColor = image
         ? [UIColor clearColor]
         : [[UIColor blackColor] colorWithAlphaComponent:0.28];
-    [self applyCropLayout];
+    [self refreshDisplayedImage];
     if (image) {
         _imageView.alpha = 0;
         [UIView animateWithDuration:0.18 animations:^{ self->_imageView.alpha = 1; }];
@@ -204,6 +250,7 @@ enum {
 - (void)setImageContentMode:(UIViewContentMode)mode {
     _imageContentMode = mode;
     _imageView.contentMode = mode;
+    [self refreshDisplayedImage];
 }
 
 - (void)setFlipHorizontal:(BOOL)flip {
@@ -225,11 +272,24 @@ enum {
 - (void)setUncroppedSize:(CGSize)size {
     _uncroppedSize = size;
     [self applyCropLayout];
+    [self refreshDisplayedImage];
 }
 
 - (void)setCropInsets:(UIEdgeInsets)insets {
     _cropInsets = [self clampedInsets:insets];
     [self applyCropLayout];
+    [self refreshDisplayedImage];
+}
+
+- (void)setWarpPoints:(NSArray<NSValue *> *)warpPoints {
+    if (warpPoints.count != 9) warpPoints = [[self class] identityWarpPoints];
+    _warpPoints = [warpPoints copy];
+    [self refreshDisplayedImage];
+    if (_warpModeEnabled) [self layoutWarpChrome];
+}
+
+- (void)resetWarp {
+    self.warpPoints = [[self class] identityWarpPoints];
 }
 
 - (UIEdgeInsets)clampedInsets:(UIEdgeInsets)insets {
@@ -274,19 +334,141 @@ enum {
     CGFloat l = _cropInsets.left * base.width;
     CGFloat t = _cropInsets.top * base.height;
     _clipView.frame = self.bounds;
-    _imageView.frame = CGRectMake(-l, -t, base.width, base.height);
-    _placeholderLabel.frame = _imageView.frame;
+    BOOL warped = ![[self class] warpPointsAreIdentity:_warpPoints];
+    if (warped) {
+        _clipView.clipsToBounds = NO;
+        _imageView.frame = _clipView.bounds;
+        _placeholderLabel.frame = _clipView.bounds;
+    } else {
+        _clipView.clipsToBounds = YES;
+        _imageView.frame = CGRectMake(-l, -t, base.width, base.height);
+        _placeholderLabel.frame = _imageView.frame;
+    }
 }
+
+#pragma mark - Display / warp render
+
+- (void)refreshDisplayedImage {
+    [self applyCropLayout];
+    if (!_image) {
+        _imageView.image = nil;
+        return;
+    }
+    if ([[self class] warpPointsAreIdentity:_warpPoints]) {
+        _imageView.image = _image;
+        return;
+    }
+    UIImage *warped = [self renderWarpedImage:_image];
+    _imageView.image = warped ?: _image;
+    _imageView.frame = _clipView.bounds;
+}
+
+- (UIImage *)renderWarpedImage:(UIImage *)srcImg {
+    CIImage *input = [[CIImage alloc] initWithImage:srcImg];
+    if (!input) return srcImg;
+    CGRect e = input.extent;
+    if (e.size.width < 2 || e.size.height < 2) return srcImg;
+
+    CIImage *acc = nil;
+    for (NSInteger r = 0; r < 2; r++) {
+        for (NSInteger c = 0; c < 2; c++) {
+            CGFloat u0 = c / 2.0, u1 = (c + 1) / 2.0;
+            CGFloat v0 = r / 2.0, v1 = (r + 1) / 2.0;
+            CGFloat pad = 1.0;
+            CGFloat x = e.origin.x + u0 * e.size.width - (c == 0 ? 0 : pad);
+            CGFloat w = (u1 - u0) * e.size.width + pad;
+            CGFloat ciBottom = e.origin.y + (1.0 - v1) * e.size.height - (r == 1 ? 0 : pad);
+            CGFloat h = (v1 - v0) * e.size.height + pad;
+            CGRect src = CGRectMake(x, ciBottom, w, h);
+            CIImage *cell = [input imageByCroppingToRect:src];
+
+            CGPoint pTL = [_warpPoints[r * 3 + c] CGPointValue];
+            CGPoint pTR = [_warpPoints[r * 3 + c + 1] CGPointValue];
+            CGPoint pBL = [_warpPoints[(r + 1) * 3 + c] CGPointValue];
+            CGPoint pBR = [_warpPoints[(r + 1) * 3 + c + 1] CGPointValue];
+
+            CIVector *tl = [self ciDest:pTL extent:e];
+            CIVector *tr = [self ciDest:pTR extent:e];
+            CIVector *bl = [self ciDest:pBL extent:e];
+            CIVector *br = [self ciDest:pBR extent:e];
+
+            CIFilter *f = [CIFilter filterWithName:@"CIPerspectiveTransform"];
+            if (!f) continue;
+            [f setValue:cell forKey:kCIInputImageKey];
+            [f setValue:tl forKey:@"inputTopLeft"];
+            [f setValue:tr forKey:@"inputTopRight"];
+            [f setValue:bl forKey:@"inputBottomLeft"];
+            [f setValue:br forKey:@"inputBottomRight"];
+            CIImage *piece = f.outputImage;
+            if (!piece) continue;
+            acc = acc ? [piece imageByCompositingOverImage:acc] : piece;
+        }
+    }
+    if (!acc) return srcImg;
+
+    static CIContext *ctx;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        ctx = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer: @NO}];
+    });
+    CGImageRef cg = [ctx createCGImage:acc fromRect:e];
+    if (!cg) return srcImg;
+    UIImage *out = [UIImage imageWithCGImage:cg scale:srcImg.scale orientation:UIImageOrientationUp];
+    CGImageRelease(cg);
+    return out;
+}
+
+- (CIVector *)ciDest:(CGPoint)u extent:(CGRect)e {
+    return [CIVector vectorWithX:e.origin.x + u.x * e.size.width
+                               Y:e.origin.y + (1.0 - u.y) * e.size.height];
+}
+
+#pragma mark - Modes
 
 - (void)setCropModeEnabled:(BOOL)on {
     _cropModeEnabled = on;
-    _cropFrameLayer.hidden = !on;
-    _cropGuideLayer.hidden = !on;
-    for (UIView *h in _cropHandles) h.hidden = !on;
-    self.layer.shouldRasterize = !on;
     if (on) {
+        _warpModeEnabled = NO;
+        _perspectiveModeEnabled = NO;
+    }
+    [self updateEditChrome];
+}
+
+- (void)setWarpModeEnabled:(BOOL)on {
+    _warpModeEnabled = on;
+    if (on) {
+        _cropModeEnabled = NO;
+        _perspectiveModeEnabled = NO;
+    }
+    [self updateEditChrome];
+}
+
+- (void)setPerspectiveModeEnabled:(BOOL)on {
+    _perspectiveModeEnabled = on;
+    if (on) {
+        _cropModeEnabled = NO;
+        _warpModeEnabled = NO;
+    }
+    [self updateEditChrome];
+}
+
+- (void)updateEditChrome {
+    BOOL crop = _cropModeEnabled;
+    BOOL warp = _warpModeEnabled;
+    BOOL persp = _perspectiveModeEnabled;
+    _cropFrameLayer.hidden = !crop;
+    _cropGuideLayer.hidden = !crop;
+    _warpGridLayer.hidden = !warp;
+    _perspFrameLayer.hidden = !persp;
+    for (UIView *h in _cropHandles) h.hidden = !crop;
+    for (UIView *h in _warpHandles) h.hidden = !warp;
+    for (UIView *h in _perspHandles) h.hidden = !persp;
+    self.layer.shouldRasterize = !(crop || warp || persp);
+    if (crop || warp || persp) {
         self.layer.borderWidth = 0;
-        [self layoutCropChrome];
+        if (crop) [self layoutCropChrome];
+        if (warp) [self layoutWarpChrome];
+        if (persp) [self layoutPerspChrome];
     } else {
         [self updateAppearance];
     }
@@ -295,6 +477,8 @@ enum {
 - (BOOL)isCropHandleView:(UIView *)view {
     while (view && view != self) {
         if ([_cropHandles containsObject:view]) return YES;
+        if ([_warpHandles containsObject:view]) return YES;
+        if ([_perspHandles containsObject:view]) return YES;
         view = view.superview;
     }
     return NO;
@@ -302,12 +486,16 @@ enum {
 
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
     if ([super pointInside:point withEvent:event]) return YES;
-    if (!_cropModeEnabled) return NO;
-    for (UIView *h in _cropHandles) {
-        if (!h.hidden && CGRectContainsPoint(h.frame, point)) return YES;
+    NSArray *sets = @[ _cropHandles, _warpHandles, _perspHandles ];
+    for (NSArray *hs in sets) {
+        for (UIView *h in hs) {
+            if (!h.hidden && CGRectContainsPoint(h.frame, point)) return YES;
+        }
     }
     return NO;
 }
+
+#pragma mark - Handle drags
 
 - (void)handleCropPan:(UIPanGestureRecognizer *)g {
     if (!_cropModeEnabled) return;
@@ -331,43 +519,59 @@ enum {
     }
 }
 
-- (void)layoutCropChrome {
-    CGRect b = self.bounds;
-    _cropFrameLayer.frame = b;
-    UIBezierPath *frame = [UIBezierPath bezierPathWithRect:CGRectInset(b, 1, 1)];
-    CGFloat tick = 18.0;
-    [frame moveToPoint:CGPointMake(1, tick)];
-    [frame addLineToPoint:CGPointMake(1, 1)];
-    [frame addLineToPoint:CGPointMake(tick, 1)];
-    [frame moveToPoint:CGPointMake(b.size.width - tick, 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, tick)];
-    [frame moveToPoint:CGPointMake(1, b.size.height - tick)];
-    [frame addLineToPoint:CGPointMake(1, b.size.height - 1)];
-    [frame addLineToPoint:CGPointMake(tick, b.size.height - 1)];
-    [frame moveToPoint:CGPointMake(b.size.width - tick, b.size.height - 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - tick)];
-    _cropFrameLayer.path = frame.CGPath;
-
-    UIBezierPath *guides = [UIBezierPath bezierPath];
-    for (NSInteger i = 1; i <= 2; i++) {
-        CGFloat x = b.size.width * i / 3.0;
-        [guides moveToPoint:CGPointMake(x, 0)];
-        [guides addLineToPoint:CGPointMake(x, b.size.height)];
-        CGFloat y = b.size.height * i / 3.0;
-        [guides moveToPoint:CGPointMake(0, y)];
-        [guides addLineToPoint:CGPointMake(b.size.width, y)];
+- (void)handleWarpPan:(UIPanGestureRecognizer *)g {
+    if (!_warpModeEnabled) return;
+    CGSize sz = self.bounds.size;
+    if (sz.width < 1 || sz.height < 1) return;
+    CGPoint t = [g translationInView:self];
+    [g setTranslation:CGPointZero inView:self];
+    NSInteger i = g.view.tag;
+    if (i < 0 || i >= 9) return;
+    NSMutableArray *pts = [_warpPoints mutableCopy];
+    CGPoint p = [pts[i] CGPointValue];
+    p.x += t.x / sz.width;
+    p.y += t.y / sz.height;
+    p.x = MAX(-0.25, MIN(1.25, p.x));
+    p.y = MAX(-0.25, MIN(1.25, p.y));
+    pts[i] = [NSValue valueWithCGPoint:p];
+    _warpPoints = pts;
+    [self refreshDisplayedImage];
+    [self layoutWarpChrome];
+    if ([self.cropDelegate respondsToSelector:@selector(overlayView:didChangeWarpPoints:)]) {
+        [self.cropDelegate overlayView:self didChangeWarpPoints:_warpPoints];
     }
-    _cropGuideLayer.frame = b;
-    _cropGuideLayer.path = guides.CGPath;
+}
 
+- (void)handlePerspPan:(UIPanGestureRecognizer *)g {
+    if (!_perspectiveModeEnabled) return;
+    CGSize sz = self.bounds.size;
+    if (sz.width < 1 || sz.height < 1) return;
+    CGPoint t = [g translationInView:self];
+    [g setTranslation:CGPointZero inView:self];
+    NSInteger tag = g.view.tag;
+    CGFloat dPitch = 0, dYaw = 0;
+    CGFloat ky = 1.35 / MAX(sz.height, 1);
+    CGFloat kx = 1.35 / MAX(sz.width, 1);
+    if (tag == kOLHandleT || tag == kOLHandleTL || tag == kOLHandleTR) dPitch += t.y * ky;
+    if (tag == kOLHandleB || tag == kOLHandleBL || tag == kOLHandleBR) dPitch -= t.y * ky;
+    if (tag == kOLHandleL || tag == kOLHandleTL || tag == kOLHandleBL) dYaw += t.x * kx;
+    if (tag == kOLHandleR || tag == kOLHandleTR || tag == kOLHandleBR) dYaw -= t.x * kx;
+    if (fabs(dPitch) < 0.0001 && fabs(dYaw) < 0.0001) return;
+    if ([self.cropDelegate respondsToSelector:@selector(overlayView:didChangePitchDelta:yawDelta:)]) {
+        [self.cropDelegate overlayView:self didChangePitchDelta:dPitch yawDelta:dYaw];
+    }
+}
+
+#pragma mark - Chrome layout
+
+- (void)layoutEdgeHandles:(NSArray<UIView *> *)handles {
+    CGRect b = self.bounds;
     CGFloat s = 28.0;
     CGFloat midX = b.size.width * 0.5 - s * 0.5;
     CGFloat midY = b.size.height * 0.5 - s * 0.5;
     CGFloat maxX = b.size.width - s * 0.5;
     CGFloat maxY = b.size.height - s * 0.5;
-    for (UIView *h in _cropHandles) {
+    for (UIView *h in handles) {
         CGRect f = CGRectMake(0, 0, s, s);
         switch (h.tag) {
             case kOLHandleL:  f.origin = CGPointMake(-s * 0.5, midY); break;
@@ -382,6 +586,89 @@ enum {
         }
         h.frame = f;
     }
+}
+
+- (void)addCornerTicks:(UIBezierPath *)frame rect:(CGRect)b tick:(CGFloat)tick {
+    [frame moveToPoint:CGPointMake(1, tick)];
+    [frame addLineToPoint:CGPointMake(1, 1)];
+    [frame addLineToPoint:CGPointMake(tick, 1)];
+    [frame moveToPoint:CGPointMake(b.size.width - tick, 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, tick)];
+    [frame moveToPoint:CGPointMake(1, b.size.height - tick)];
+    [frame addLineToPoint:CGPointMake(1, b.size.height - 1)];
+    [frame addLineToPoint:CGPointMake(tick, b.size.height - 1)];
+    [frame moveToPoint:CGPointMake(b.size.width - tick, b.size.height - 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - 1)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - tick)];
+}
+
+- (void)layoutCropChrome {
+    CGRect b = self.bounds;
+    _cropFrameLayer.frame = b;
+    UIBezierPath *frame = [UIBezierPath bezierPathWithRect:CGRectInset(b, 1, 1)];
+    [self addCornerTicks:frame rect:b tick:18.0];
+    _cropFrameLayer.path = frame.CGPath;
+
+    UIBezierPath *guides = [UIBezierPath bezierPath];
+    for (NSInteger i = 1; i <= 2; i++) {
+        CGFloat x = b.size.width * i / 3.0;
+        [guides moveToPoint:CGPointMake(x, 0)];
+        [guides addLineToPoint:CGPointMake(x, b.size.height)];
+        CGFloat y = b.size.height * i / 3.0;
+        [guides moveToPoint:CGPointMake(0, y)];
+        [guides addLineToPoint:CGPointMake(b.size.width, y)];
+    }
+    _cropGuideLayer.frame = b;
+    _cropGuideLayer.path = guides.CGPath;
+    [self layoutEdgeHandles:_cropHandles];
+}
+
+- (void)layoutWarpChrome {
+    CGRect b = self.bounds;
+    CGFloat s = 28.0;
+    UIBezierPath *grid = [UIBezierPath bezierPath];
+    CGPoint pos[9];
+    for (NSInteger i = 0; i < 9; i++) {
+        CGPoint u = [_warpPoints[i] CGPointValue];
+        pos[i] = CGPointMake(u.x * b.size.width, u.y * b.size.height);
+        _warpHandles[i].frame = CGRectMake(pos[i].x - s * 0.5, pos[i].y - s * 0.5, s, s);
+    }
+    for (NSInteger r = 0; r < 3; r++) {
+        [grid moveToPoint:pos[r * 3]];
+        [grid addLineToPoint:pos[r * 3 + 1]];
+        [grid addLineToPoint:pos[r * 3 + 2]];
+    }
+    for (NSInteger c = 0; c < 3; c++) {
+        [grid moveToPoint:pos[c]];
+        [grid addLineToPoint:pos[3 + c]];
+        [grid addLineToPoint:pos[6 + c]];
+    }
+    _warpGridLayer.frame = b;
+    _warpGridLayer.path = grid.CGPath;
+}
+
+- (void)layoutPerspChrome {
+    CGRect b = self.bounds;
+    _perspFrameLayer.frame = b;
+    UIBezierPath *frame = [UIBezierPath bezierPathWithRect:CGRectInset(b, 1, 1)];
+    [self addCornerTicks:frame rect:b tick:18.0];
+    CGFloat midX = b.size.width * 0.5;
+    CGFloat midY = b.size.height * 0.5;
+    [frame moveToPoint:CGPointMake(midX - 12, 4)];
+    [frame addLineToPoint:CGPointMake(midX, 0)];
+    [frame addLineToPoint:CGPointMake(midX + 12, 4)];
+    [frame moveToPoint:CGPointMake(midX - 12, b.size.height - 4)];
+    [frame addLineToPoint:CGPointMake(midX, b.size.height)];
+    [frame addLineToPoint:CGPointMake(midX + 12, b.size.height - 4)];
+    [frame moveToPoint:CGPointMake(4, midY - 12)];
+    [frame addLineToPoint:CGPointMake(0, midY)];
+    [frame addLineToPoint:CGPointMake(4, midY + 12)];
+    [frame moveToPoint:CGPointMake(b.size.width - 4, midY - 12)];
+    [frame addLineToPoint:CGPointMake(b.size.width, midY)];
+    [frame addLineToPoint:CGPointMake(b.size.width - 4, midY + 12)];
+    _perspFrameLayer.path = frame.CGPath;
+    [self layoutEdgeHandles:_perspHandles];
 }
 
 - (void)updateGrid {
@@ -409,6 +696,8 @@ enum {
     [self applyCropLayout];
     [self updateGrid];
     if (_cropModeEnabled) [self layoutCropChrome];
+    if (_warpModeEnabled) [self layoutWarpChrome];
+    if (_perspectiveModeEnabled) [self layoutPerspChrome];
 }
 
 @end

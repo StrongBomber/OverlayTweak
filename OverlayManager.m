@@ -54,8 +54,12 @@
 @property (nonatomic, assign) CGFloat yawValue;
 @property (nonatomic, assign) UIEdgeInsets cropInsetsValue;
 @property (nonatomic, assign) BOOL cropModeEnabled;
+@property (nonatomic, assign) BOOL warpModeEnabled;
+@property (nonatomic, assign) BOOL perspectiveModeEnabled;
 @property (nonatomic, strong) UIView *cropBar;
 @property (nonatomic, assign) BOOL menuHidden;
+@property (nonatomic, strong) NSArray<UIButton *> *quickButtons;
+@property (nonatomic, assign) BOOL quickMenuOpen;
 
 @property (nonatomic, strong) NSUserDefaults *defaults;
 @property (nonatomic, assign) BOOL setupCompleted;
@@ -356,6 +360,7 @@
     self.overlayView = view;
     self.overlayContainer = view;
     [self applyContainerTransform];
+    [self applySavedWarp];
     [self clampOverlayToScreen];
 }
 
@@ -392,9 +397,14 @@
   forControlEvents:(UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel)];
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(menuDragged:)];
     [btn addGestureRecognizer:pan];
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(menuLongPressed:)];
+    lp.minimumPressDuration = 0.32;
+    lp.allowableMovement = 14;
+    [btn addGestureRecognizer:lp];
 
     [self.overlayWindow.rootViewController.view addSubview:btn];
     self.menuButton = btn;
+    [self createQuickButtons];
 
     CGRect b = self.overlayWindow.bounds;
     UIEdgeInsets inset = self.overlayWindow.safeAreaInsets;
@@ -459,11 +469,15 @@
 }
 
 - (void)menuDragged:(UIPanGestureRecognizer *)g {
+    if (_quickMenuOpen && g.state == UIGestureRecognizerStateBegan) {
+        /* Keep fan attached while dragging the hub. */
+    }
     CGPoint t = [g translationInView:self.overlayWindow];
     CGPoint c = CGPointMake(g.view.center.x + t.x, g.view.center.y + t.y);
     g.view.center = c;
     [g setTranslation:CGPointZero inView:self.overlayWindow];
     [self clampMenuToScreen];
+    if (_quickMenuOpen) [self layoutQuickButtonsFromHub:NO];
     if (g.state == UIGestureRecognizerStateEnded) {
         [_defaults setDouble:self.menuButton.center.x forKey:kDefaultsMenuX];
         [_defaults setDouble:self.menuButton.center.y forKey:kDefaultsMenuY];
@@ -475,7 +489,165 @@
     self.menuButton.hidden = hidden;
     self.edgeTab.hidden = !hidden;
     [_defaults setBool:hidden forKey:kDefaultsMenuHidden];
-    if (hidden) [self showToast:@"Menü gizlendi — kenar ⚙"];
+    if (hidden) {
+        [self hideQuickMenu];
+        [self showToast:@"Menü gizlendi — kenar ⚙"];
+    }
+}
+
+#pragma mark - Quick actions (long-press hub)
+
+- (UIButton *)makeRoundToolButton:(NSString *)title {
+    CGFloat size = 50.0;
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.frame = CGRectMake(0, 0, size, size);
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
+    blurView.frame = btn.bounds;
+    blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    blurView.userInteractionEnabled = NO;
+    blurView.layer.cornerRadius = size / 2.0;
+    blurView.clipsToBounds = YES;
+    [btn insertSubview:blurView atIndex:0];
+    [btn setTitle:title forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:20];
+    btn.layer.cornerRadius = size / 2.0;
+    btn.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+    btn.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.28].CGColor;
+    btn.layer.shadowColor = [UIColor blackColor].CGColor;
+    btn.layer.shadowOpacity = 0.45;
+    btn.layer.shadowRadius = 10;
+    btn.layer.shadowOffset = CGSizeMake(0, 4);
+    btn.hidden = YES;
+    btn.alpha = 0;
+    btn.exclusiveTouch = YES;
+    return btn;
+}
+
+- (void)createQuickButtons {
+    for (UIButton *b in self.quickButtons) [b removeFromSuperview];
+    UIView *root = self.overlayWindow.rootViewController.view;
+    NSArray *titles = @[ @"✂️", @"🔒", @"👁", @"✨", @"📐" ];
+    NSArray *labels = @[ @"Kırp", @"Kilit", @"Göster", @"Warp", @"Perspektif" ];
+    NSMutableArray *btns = [NSMutableArray array];
+    for (NSInteger i = 0; i < 5; i++) {
+        UIButton *b = [self makeRoundToolButton:titles[i]];
+        b.tag = 900 + i;
+        b.accessibilityLabel = labels[i];
+        [b addTarget:self action:@selector(quickTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [root insertSubview:b belowSubview:self.menuButton];
+        [btns addObject:b];
+    }
+    self.quickButtons = btns;
+    [self refreshQuickButtonFaces];
+}
+
+- (void)refreshQuickButtonFaces {
+    if (self.quickButtons.count < 5) return;
+    [self.quickButtons[1] setTitle:self.isLocked ? @"🔒" : @"🔓" forState:UIControlStateNormal];
+    self.quickButtons[1].accessibilityLabel = self.isLocked ? @"Kilidi aç" : @"Kilitle";
+    [self.quickButtons[2] setTitle:self.isOverlayVisible ? @"👁" : @"🙈" forState:UIControlStateNormal];
+    self.quickButtons[2].accessibilityLabel = self.isOverlayVisible ? @"Overlay gizle" : @"Overlay göster";
+}
+
+- (void)layoutQuickButtonsFromHub:(BOOL)collapsed {
+    CGPoint hub = self.menuButton.center;
+    CGRect b = self.overlayWindow.bounds;
+    CGFloat R = collapsed ? 0 : 86.0;
+    CGFloat toward = atan2(CGRectGetMidY(b) - hub.y, CGRectGetMidX(b) - hub.x);
+    CGFloat span = 160.0 * (CGFloat)M_PI / 180.0;
+    CGFloat a0 = toward - span * 0.5;
+    NSInteger n = (NSInteger)self.quickButtons.count;
+    for (NSInteger i = 0; i < n; i++) {
+        CGFloat a = (n <= 1) ? toward : (a0 + span * i / (CGFloat)(n - 1));
+        CGPoint p = CGPointMake(hub.x + cos(a) * R, hub.y + sin(a) * R);
+        self.quickButtons[i].center = p;
+    }
+}
+
+- (void)showQuickMenu {
+    if (_quickMenuOpen || !self.menuButton || self.menuButton.hidden) return;
+    if (self.quickButtons.count == 0) [self createQuickButtons];
+    [self refreshQuickButtonFaces];
+    _quickMenuOpen = YES;
+    CGPoint hub = self.menuButton.center;
+    for (UIButton *b in self.quickButtons) {
+        b.hidden = NO;
+        b.alpha = 0;
+        b.center = hub;
+        b.transform = CGAffineTransformMakeScale(0.35, 0.35);
+        [b.superview bringSubviewToFront:b];
+    }
+    [self.menuButton.superview bringSubviewToFront:self.menuButton];
+    [self layoutQuickButtonsFromHub:NO];
+    NSArray *targets = [self.quickButtons copy];
+    for (NSInteger i = 0; i < (NSInteger)targets.count; i++) {
+        UIButton *b = targets[i];
+        CGPoint dest = b.center;
+        b.center = hub;
+        [UIView animateWithDuration:0.42
+                              delay:0.03 * i
+             usingSpringWithDamping:0.70
+              initialSpringVelocity:0.55
+                            options:UIViewAnimationOptionAllowUserInteraction
+                         animations:^{
+            b.center = dest;
+            b.alpha = 1;
+            b.transform = CGAffineTransformIdentity;
+        } completion:nil];
+    }
+}
+
+- (void)hideQuickMenu {
+    if (!_quickMenuOpen && self.quickButtons.count == 0) return;
+    _quickMenuOpen = NO;
+    CGPoint hub = self.menuButton.center;
+    NSArray *btns = [self.quickButtons copy];
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        for (UIButton *b in btns) {
+            b.center = hub;
+            b.alpha = 0;
+            b.transform = CGAffineTransformMakeScale(0.35, 0.35);
+        }
+    } completion:^(__unused BOOL f) {
+        if (!self->_quickMenuOpen) {
+            for (UIButton *b in btns) {
+                b.hidden = YES;
+                b.transform = CGAffineTransformIdentity;
+            }
+        }
+    }];
+}
+
+- (void)quickTapped:(UIButton *)btn {
+    NSInteger i = btn.tag - 900;
+    switch (i) {
+        case 0:
+            [self hideQuickMenu];
+            [self beginCropMode];
+            break;
+        case 1:
+            [self toggleLock];
+            [self refreshQuickButtonFaces];
+            [self showToast:self.isLocked ? @"Kilitlendi" : @"Kilit açıldı"];
+            if (self.isLocked) [self endAllEditModes];
+            break;
+        case 2:
+            [self toggleOverlay];
+            [self refreshQuickButtonFaces];
+            [self showToast:self.isOverlayVisible ? @"Overlay görünür" : @"Overlay gizli"];
+            break;
+        case 3:
+            [self hideQuickMenu];
+            [self beginWarpMode];
+            break;
+        case 4:
+            [self hideQuickMenu];
+            [self beginPerspectiveMode];
+            break;
+        default:
+            break;
+    }
 }
 
 - (BOOL)isMenuHidden { return _menuHidden; }
@@ -514,10 +686,11 @@
     if (g.view == self.settingsContainerView) {
         return t.view == self.settingsContainerView;
     }
-    if (_cropModeEnabled && (g == self.panGesture || g == self.pinchGesture || g == self.rotationGesture)) {
+    BOOL editing = _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled;
+    if (editing && (g == self.panGesture || g == self.pinchGesture || g == self.rotationGesture)) {
         return NO;
     }
-    if (_cropModeEnabled && [self.overlayView isCropHandleView:t.view]) {
+    if ([self.overlayView isCropHandleView:t.view]) {
         return NO;
     }
     return YES;
@@ -535,12 +708,12 @@
     t = CATransform3DScale(t, _currentScaleValue, _currentScaleValue, 1);
     self.overlayContainer.layer.transform = t;
     BOOL perspectiveOn = (fabs(_pitchValue) > 0.001 || fabs(_yawValue) > 0.001);
-    self.overlayContainer.layer.shouldRasterize = !perspectiveOn && !_cropModeEnabled;
+    self.overlayContainer.layer.shouldRasterize = !perspectiveOn && !_cropModeEnabled && !_warpModeEnabled && !_perspectiveModeEnabled;
     self.overlayContainer.layer.rasterizationScale = [UIScreen mainScreen].scale;
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)g {
-    if (self.isLocked || _cropModeEnabled) return;
+    if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
     UIView *v = g.view;
     CGPoint t = [g translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
@@ -553,7 +726,7 @@
 }
 
 - (void)handlePinch:(UIPinchGestureRecognizer *)g {
-    if (self.isLocked || _cropModeEnabled) return;
+    if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
     if (g.state == UIGestureRecognizerStateChanged) {
         _currentScaleValue = MAX(0.15, MIN(6.0, _currentScaleValue * g.scale));
         [self applyContainerTransform];
@@ -563,7 +736,7 @@
 }
 
 - (void)handleRotation:(UIRotationGestureRecognizer *)g {
-    if (self.isLocked || _cropModeEnabled) return;
+    if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
     if (g.state == UIGestureRecognizerStateChanged) {
         _currentRotationValue += g.rotation;
         [self applyContainerTransform];
@@ -579,7 +752,7 @@
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)g {
-    if (_cropModeEnabled) return;
+    if (_cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
     if (g.state != UIGestureRecognizerStateBegan) return;
     [self toggleLock];
     [self showToast:self.isLocked ? @"Kilitlendi — dokunmalar oyuna geçer" : @"Kilit açıldı"];
@@ -622,6 +795,16 @@
         }
     }
 
+    if (_quickMenuOpen) {
+        for (UIButton *b in self.quickButtons) {
+            if (b.hidden) continue;
+            CGPoint p = [win convertPoint:point toView:b];
+            if ([b pointInside:p withEvent:event]) {
+                return [b hitTest:p withEvent:event];
+            }
+        }
+    }
+
     if (self.menuButton && !self.menuButton.hidden) {
         CGPoint p = [win convertPoint:point toView:self.menuButton];
         if ([self.menuButton pointInside:p withEvent:event]) {
@@ -643,7 +826,9 @@
         }
     }
 
-    if (self.overlayContainer && self.isOverlayVisible && !self.isLocked && !self.overlayContainer.hidden) {
+    BOOL editing = _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled;
+    if (self.overlayContainer && self.isOverlayVisible && !self.overlayContainer.hidden &&
+        (!self.isLocked || editing)) {
         CGPoint p = [win convertPoint:point toView:self.overlayContainer];
         if ([self.overlayContainer pointInside:p withEvent:event]) {
             return [self.overlayContainer hitTest:p withEvent:event];
@@ -1073,21 +1258,47 @@
     [self applyCropInsets:insets keepPosition:YES];
 }
 
+- (void)overlayView:(OverlayView *)view didChangeWarpPoints:(NSArray<NSValue *> *)points {
+    (void)view;
+    (void)points;
+    [self scheduleSave];
+}
+
+- (void)overlayView:(OverlayView *)view didChangePitchDelta:(CGFloat)dPitch yawDelta:(CGFloat)dYaw {
+    (void)view;
+    [self setPitch:_pitchValue + dPitch];
+    [self setYaw:_yawValue + dYaw];
+}
+
+- (void)endAllEditModes {
+    [self endCropMode];
+    [self endWarpMode];
+    [self endPerspectiveMode];
+}
+
+- (BOOL)prepareEditMode {
+    if (![NSThread isMainThread]) return NO;
+    if (self.isLocked) {
+        [self showToast:@"Önce kilidi açın"];
+        return NO;
+    }
+    if (self.isSettingsVisible) [self hideSettingsPanel];
+    if (!self.isOverlayVisible) [self showOverlay];
+    return YES;
+}
+
 - (void)beginCropMode {
     if (![NSThread isMainThread]) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self beginCropMode]; });
         return;
     }
-    if (self.isLocked) {
-        [self showToast:@"Önce kilidi açın"];
-        return;
-    }
-    if (self.isSettingsVisible) [self hideSettingsPanel];
-    if (!self.isOverlayVisible) [self showOverlay];
+    if (![self prepareEditMode]) return;
+    [self endWarpMode];
+    [self endPerspectiveMode];
     _cropModeEnabled = YES;
     self.overlayView.cropModeEnabled = YES;
     [self applyContainerTransform];
-    [self showCropBar];
+    [self showEditBarTitle:@"Kırpma" reset:@selector(resetCrop) done:@selector(endCropMode)];
     [self showToast:@"Tutamaçları sürükleyerek kırpın"];
 }
 
@@ -1102,7 +1313,60 @@
 
 - (BOOL)isCropModeEnabled { return _cropModeEnabled; }
 
-- (void)showCropBar {
+- (void)beginWarpMode {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self beginWarpMode]; });
+        return;
+    }
+    if (![self prepareEditMode]) return;
+    [self endCropMode];
+    [self endPerspectiveMode];
+    _warpModeEnabled = YES;
+    self.overlayView.warpModeEnabled = YES;
+    [self applyContainerTransform];
+    [self showEditBarTitle:@"Warp / Distort" reset:@selector(resetWarp) done:@selector(endWarpMode)];
+    [self showToast:@"3×3 ızgara — köşeler distort, iç noktalar warp"];
+}
+
+- (void)endWarpMode {
+    if (!_warpModeEnabled) return;
+    _warpModeEnabled = NO;
+    self.overlayView.warpModeEnabled = NO;
+    [self applyContainerTransform];
+    [self hideCropBar];
+    [self saveCurrentState];
+}
+
+- (void)resetWarp {
+    [self.overlayView resetWarp];
+    [self scheduleSave];
+}
+
+- (void)beginPerspectiveMode {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self beginPerspectiveMode]; });
+        return;
+    }
+    if (![self prepareEditMode]) return;
+    [self endCropMode];
+    [self endWarpMode];
+    _perspectiveModeEnabled = YES;
+    self.overlayView.perspectiveModeEnabled = YES;
+    [self applyContainerTransform];
+    [self showEditBarTitle:@"Perspektif" reset:@selector(resetPerspective) done:@selector(endPerspectiveMode)];
+    [self showToast:@"Kenar tutamaçları: pitch / yaw"];
+}
+
+- (void)endPerspectiveMode {
+    if (!_perspectiveModeEnabled) return;
+    _perspectiveModeEnabled = NO;
+    self.overlayView.perspectiveModeEnabled = NO;
+    [self applyContainerTransform];
+    [self hideCropBar];
+    [self saveCurrentState];
+}
+
+- (void)showEditBarTitle:(NSString *)titleText reset:(SEL)reset done:(SEL)done {
     [self.cropBar removeFromSuperview];
     UIView *root = self.overlayWindow.rootViewController.view;
     CGFloat w = MIN(340.0, root.bounds.size.width - 24.0);
@@ -1121,32 +1385,32 @@
     bar.userInteractionEnabled = YES;
 
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, w - 188, h)];
-    title.text = @"Kırpma";
+    title.text = titleText;
     title.textColor = [UIColor whiteColor];
     title.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     [bar addSubview:title];
 
-    UIButton *reset = [UIButton buttonWithType:UIButtonTypeSystem];
-    reset.frame = CGRectMake(w - 176, 12, 78, 32);
-    [reset setTitle:@"Sıfırla" forState:UIControlStateNormal];
-    [reset setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    reset.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-    reset.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
-    reset.layer.cornerRadius = 10;
-    reset.exclusiveTouch = YES;
-    [reset addTarget:self action:@selector(resetCrop) forControlEvents:UIControlEventTouchUpInside];
-    [bar addSubview:reset];
+    UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    resetBtn.frame = CGRectMake(w - 176, 12, 78, 32);
+    [resetBtn setTitle:@"Sıfırla" forState:UIControlStateNormal];
+    [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    resetBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    resetBtn.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
+    resetBtn.layer.cornerRadius = 10;
+    resetBtn.exclusiveTouch = YES;
+    [resetBtn addTarget:self action:reset forControlEvents:UIControlEventTouchUpInside];
+    [bar addSubview:resetBtn];
 
-    UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
-    done.frame = CGRectMake(w - 90, 12, 78, 32);
-    [done setTitle:@"Tamam" forState:UIControlStateNormal];
-    [done setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    done.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-    done.backgroundColor = [UIColor systemBlueColor];
-    done.layer.cornerRadius = 10;
-    done.exclusiveTouch = YES;
-    [done addTarget:self action:@selector(endCropMode) forControlEvents:UIControlEventTouchUpInside];
-    [bar addSubview:done];
+    UIButton *doneBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    doneBtn.frame = CGRectMake(w - 90, 12, 78, 32);
+    [doneBtn setTitle:@"Tamam" forState:UIControlStateNormal];
+    [doneBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    doneBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    doneBtn.backgroundColor = [UIColor systemBlueColor];
+    doneBtn.layer.cornerRadius = 10;
+    doneBtn.exclusiveTouch = YES;
+    [doneBtn addTarget:self action:done forControlEvents:UIControlEventTouchUpInside];
+    [bar addSubview:doneBtn];
 
     bar.alpha = 0;
     bar.transform = CGAffineTransformMakeTranslation(0, 12);
@@ -1192,8 +1456,9 @@
     [_defaults setDouble:_customHeightValue forKey:kDefaultsCustomHeight];
     [self setShowsBorder:YES];
     [self setShowsGrid:NO];
-    [self endCropMode];
+    [self endAllEditModes];
     [self resetCrop];
+    [self resetWarp];
     [self resetPerspective];
     [self resetTransform];
     [self clearOverlayImage];
@@ -1232,6 +1497,34 @@
         [_defaults setDouble:self.menuButton.center.x forKey:kDefaultsMenuX];
         [_defaults setDouble:self.menuButton.center.y forKey:kDefaultsMenuY];
     }
+    NSArray *wpts = self.overlayView.warpPoints;
+    if (wpts.count == 9) {
+        NSMutableArray *raw = [NSMutableArray arrayWithCapacity:18];
+        for (NSValue *v in wpts) {
+            CGPoint p = [v CGPointValue];
+            [raw addObject:@(p.x)];
+            [raw addObject:@(p.y)];
+        }
+        [_defaults setObject:raw forKey:kDefaultsWarpPts];
+    }
+}
+
+- (void)applySavedWarp {
+    if (!self.overlayView) return;
+    NSArray *raw = [_defaults arrayForKey:kDefaultsWarpPts];
+    if (![raw isKindOfClass:[NSArray class]] || raw.count != 18) {
+        self.overlayView.warpPoints = [OverlayView identityWarpPoints];
+        return;
+    }
+    NSMutableArray *pts = [NSMutableArray arrayWithCapacity:9];
+    for (NSInteger i = 0; i < 9; i++) {
+        CGFloat x = [raw[i * 2] doubleValue];
+        CGFloat y = [raw[i * 2 + 1] doubleValue];
+        x = MAX(-0.25, MIN(1.25, x));
+        y = MAX(-0.25, MIN(1.25, y));
+        [pts addObject:[NSValue valueWithCGPoint:CGPointMake(x, y)]];
+    }
+    self.overlayView.warpPoints = pts;
 }
 
 - (void)loadSavedState {
@@ -1281,6 +1574,7 @@
         dispatch_async(dispatch_get_main_queue(), ^{ [self showSettingsPanel]; });
         return;
     }
+    [self hideQuickMenu];
 
     [self.overlayWindow layoutIfNeeded];
     UIViewController *root = self.overlayWindow.rootViewController;

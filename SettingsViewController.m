@@ -311,8 +311,49 @@
     [self.contentView addSubview:resetCrop];
     y += 46;
 
+    /* ÇARPIT / WARP */
+    y = [self section:@"ÇARPIT" y:y];
+    UIButton *warpModeBtn = [self actionButton:@"Warp tutamaçları (3×3)"
+                                         frame:CGRectMake(p, y, sw, 42)
+                                         color:[UIColor systemOrangeColor]
+                                    titleColor:[UIColor whiteColor]];
+    warpModeBtn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    [warpModeBtn addTarget:self action:@selector(warpModeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:warpModeBtn];
+    y += 48;
+    UILabel *warpHint = [[UILabel alloc] initWithFrame:CGRectMake(p + 2, y, sw - 4, 34)];
+    warpHint.text = @"Photoshop Distort + Warp. Köşeler dörtgen çarpıtır, iç noktalar mesh büker.";
+    warpHint.font = [UIFont systemFontOfSize:11];
+    warpHint.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.42];
+    warpHint.numberOfLines = 2;
+    [self.contentView addSubview:warpHint];
+    y += 38;
+    UIButton *resetWarp = [self actionButton:@"Warp'ı sıfırla"
+                                       frame:CGRectMake(p, y, sw, 34)
+                                       color:[[UIColor whiteColor] colorWithAlphaComponent:0.08]
+                                  titleColor:[UIColor whiteColor]];
+    resetWarp.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    [resetWarp addTarget:self action:@selector(resetWarpTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:resetWarp];
+    y += 46;
+
     /* PERSPEKTİF */
     y = [self section:@"PERSPEKTİF" y:y];
+    UIButton *perspModeBtn = [self actionButton:@"Tutamaçlarla perspektif"
+                                          frame:CGRectMake(p, y, sw, 42)
+                                          color:[UIColor systemYellowColor]
+                                     titleColor:[UIColor colorWithWhite:0.12 alpha:1]];
+    perspModeBtn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    [perspModeBtn addTarget:self action:@selector(perspectiveModeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:perspModeBtn];
+    y += 48;
+    UILabel *perspHint = [[UILabel alloc] initWithFrame:CGRectMake(p + 2, y, sw - 4, 34)];
+    perspHint.text = @"Kırpma gibi kenar/köşe tutamaçları. Üst-alt pitch, sol-sağ yaw.";
+    perspHint.font = [UIFont systemFontOfSize:11];
+    perspHint.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.42];
+    perspHint.numberOfLines = 2;
+    [self.contentView addSubview:perspHint];
+    y += 38;
     y = [self addNamedSlider:@"Pitch X" y:y sw:sw p:p color:[UIColor systemYellowColor]
                          min:-70.0f max:70.0f action:@selector(pitchChanged:)
                         unit:@"°" bind:^(UISlider *s, UILabel *l) {
@@ -794,6 +835,21 @@
 - (void)cropModeTapped {
     [self tick];
     [[OverlayManager sharedManager] beginCropMode];
+}
+
+- (void)warpModeTapped {
+    [self tick];
+    [[OverlayManager sharedManager] beginWarpMode];
+}
+
+- (void)resetWarpTapped {
+    [[OverlayManager sharedManager] resetWarp];
+    [self tick];
+}
+
+- (void)perspectiveModeTapped {
+    [self tick];
+    [[OverlayManager sharedManager] beginPerspectiveMode];
 }
 
 - (void)resetCropTapped {

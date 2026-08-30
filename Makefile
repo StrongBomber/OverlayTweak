@@ -37,6 +37,7 @@ LDFLAGS = -isysroot "$(SDK)" \
           -framework PhotosUI \
           -framework CoreGraphics \
           -framework QuartzCore \
+          -framework CoreImage \
           -install_name @executable_path/$(TARGET_NAME)
 
 .PHONY: all clean check-sdk check

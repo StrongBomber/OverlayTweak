@@ -75,6 +75,13 @@
 - (void)endCropMode;
 - (BOOL)isCropModeEnabled;
 
+- (void)beginWarpMode;
+- (void)endWarpMode;
+- (void)resetWarp;
+
+- (void)beginPerspectiveMode;
+- (void)endPerspectiveMode;
+
 - (void)resetTransform;
 - (void)resetAllSettings;
 

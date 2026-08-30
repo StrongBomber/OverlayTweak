@@ -1,52 +1,62 @@
-# ==============================================================================
-# GitHub Actions - OverlayTweak Build
-# ==============================================================================
-# Xcode ve iOS SDK doğru şekilde yapılandırılır.
-# ==============================================================================
-
 name: Build Overlay.dylib
 
 on:
-  workflow_dispatch:  # Manuel tetikleme
+  push:
+    branches: [main, arena/**]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     name: Build iOS Dylib
-    runs-on: macos-15  # macOS 15 (Sequoia) - Xcode 16 ile gelir
+    runs-on: macos-15
+    timeout-minutes: 20
 
     steps:
-      # 1. Repository'yi klonla
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      # 2. Xcode'u ayarla
       - name: Setup Xcode
         run: |
-          # Mevcut Xcode sürümünü göster
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          set -euo pipefail
+          if [ -d /Applications/Xcode.app ]; then
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          else
+            newest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+            if [ -z "${newest}" ]; then
+              echo "ERROR: no Xcode.app found"
+              ls /Applications || true
+              exit 1
+            fi
+            sudo xcode-select -s "${newest}/Contents/Developer"
+          fi
           xcodebuild -version
-          echo ""
-          # iOS SDK yolunu göster
           xcrun --sdk iphoneos --show-sdk-path
-          echo ""
-          # Xcode lisansını kabul et
           sudo xcodebuild -license accept 2>/dev/null || true
 
-      # 3. Derle
+      - name: Check sources
+        run: make check
+
       - name: Build
         run: |
+          set -euo pipefail
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
           make clean
           make
+          test -f Overlay.dylib
           echo ""
           echo "=== Derleme Sonucu ==="
           ls -lh Overlay.dylib
-          file Overlay.dylib
           lipo -info Overlay.dylib
+          otool -hv Overlay.dylib | sed -n '1,20p'
 
-      # 4. Artifact olarak yükle
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: Overlay.dylib
           path: Overlay.dylib
+          if-no-files-found: error
           retention-days: 90

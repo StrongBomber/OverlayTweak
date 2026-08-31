@@ -239,6 +239,24 @@
                             self.scaleValueLabel = l;
                         }];
 
+    /* RENK */
+    y = [self section:@"RENK" y:y];
+    UIButton *pickBtn = [self actionButton:@"Renk seç (eyedropper)"
+                                     frame:CGRectMake(p, y, sw, 42)
+                                     color:[UIColor systemPinkColor]
+                                titleColor:[UIColor whiteColor]];
+    pickBtn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    [pickBtn addTarget:self action:@selector(colorPickTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:pickBtn];
+    y += 48;
+    UILabel *pickHint = [[UILabel alloc] initWithFrame:CGRectMake(p + 2, y, sw - 4, 34)];
+    pickHint.text = @"Seçerken overlay %100 opak olur; bitince eski şeffaflık geri gelir. Renk kodu (#RRGGBB) gösterilir.";
+    pickHint.font = [UIFont systemFontOfSize:11];
+    pickHint.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.42];
+    pickHint.numberOfLines = 2;
+    [self.contentView addSubview:pickHint];
+    y += 38;
+
     /* DÖNDÜRME */
     y = [self section:@"DÖNDÜRME" y:y];
     y = [self addNamedSlider:@"Z ekseni" y:y sw:sw p:p color:[UIColor systemOrangeColor]
@@ -272,7 +290,7 @@
     [self.contentView addSubview:cropModeBtn];
     y += 48;
     UILabel *cropHint = [[UILabel alloc] initWithFrame:CGRectMake(p + 2, y, sw - 4, 34)];
-    cropHint.text = @"Çerçeve, kılavuz ve tutamaçlar overlay’de çıkar. Kalan görsel yerinde kalır.";
+    cropHint.text = @"Tutamaçlar kenarı keser; overlay kaymaz, kalan pikseller yerinde kalır.";
     cropHint.font = [UIFont systemFontOfSize:11];
     cropHint.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.42];
     cropHint.numberOfLines = 2;
@@ -830,6 +848,11 @@
                                            self.cropRightSlider.value);
     [[OverlayManager sharedManager] setCropInsets:insets];
     [self refreshCropLabels];
+}
+
+- (void)colorPickTapped {
+    [self tick];
+    [[OverlayManager sharedManager] beginColorPickMode];
 }
 
 - (void)cropModeTapped {

@@ -33,7 +33,7 @@ enum {
 @property (nonatomic, strong) NSArray<UIView *> *cropHandles;
 @property (nonatomic, strong) NSArray<UIView *> *warpHandles;
 @property (nonatomic, strong) NSArray<UIView *> *perspHandles;
-@property (nonatomic, assign) CGRect cropAnchorWinRect;
+@property (nonatomic, assign) CGRect cropSessionWinRect;
 @end
 
 @implementation OverlayView
@@ -435,6 +435,11 @@ enum {
     if (on) {
         _warpModeEnabled = NO;
         _perspectiveModeEnabled = NO;
+        CGSize base = [self effectiveUncroppedSize];
+        CGRect local = CGRectMake(-_cropInsets.left * base.width,
+                                  -_cropInsets.top * base.height,
+                                  base.width, base.height);
+        _cropSessionWinRect = [self convertRect:local toView:nil];
     }
     [self updateEditChrome];
 }
@@ -504,21 +509,9 @@ enum {
 
 - (void)handleCropPan:(UIPanGestureRecognizer *)g {
     if (!_cropModeEnabled) return;
-    CGSize base = [self effectiveUncroppedSize];
-    if (base.width < 1 || base.height < 1) return;
-
-    /* Anchor the uncropped image in window space at gesture start so later
-       bounds/center updates cannot feed back into the drag. Remaining pixels
-       stay put; only the pulled edge moves. */
-    if (g.state == UIGestureRecognizerStateBegan) {
-        CGRect local = CGRectMake(-_cropInsets.left * base.width,
-                                  -_cropInsets.top * base.height,
-                                  base.width, base.height);
-        _cropAnchorWinRect = [self convertRect:local toView:nil];
-        return;
-    }
-    CGRect wr = _cropAnchorWinRect;
+    CGRect wr = _cropSessionWinRect;
     if (wr.size.width < 1 || wr.size.height < 1) return;
+    if (g.state == UIGestureRecognizerStateBegan) return;
 
     CGPoint p = [g locationInView:nil];
     CGFloat u = (p.x - wr.origin.x) / wr.size.width;
@@ -716,6 +709,64 @@ enum {
     if (_cropModeEnabled) [self layoutCropChrome];
     if (_warpModeEnabled) [self layoutWarpChrome];
     if (_perspectiveModeEnabled) [self layoutPerspChrome];
+}
+
+
+- (CGRect)imageRectInImageView {
+    CGSize bsz = _imageView.bounds.size;
+    UIImage *img = _imageView.image ?: _image;
+    if (!img || bsz.width < 1 || bsz.height < 1) return CGRectZero;
+    CGSize isz = img.size;
+    if (isz.width < 1 || isz.height < 1) return CGRectMake(0, 0, bsz.width, bsz.height);
+    UIViewContentMode mode = _imageContentMode;
+    if (mode == UIViewContentModeScaleToFill) {
+        return CGRectMake(0, 0, bsz.width, bsz.height);
+    }
+    CGFloat sx = bsz.width / isz.width;
+    CGFloat sy = bsz.height / isz.height;
+    CGFloat s = (mode == UIViewContentModeScaleAspectFill) ? MAX(sx, sy) : MIN(sx, sy);
+    CGFloat w = isz.width * s;
+    CGFloat h = isz.height * s;
+    return CGRectMake((bsz.width - w) * 0.5, (bsz.height - h) * 0.5, w, h);
+}
+
+- (UIColor *)colorAtPoint:(CGPoint)point {
+    UIImage *img = _imageView.image ?: _image;
+    if (!img || !img.CGImage) return nil;
+    CGPoint q = [self convertPoint:point toView:_imageView];
+    CGRect drawn = [self imageRectInImageView];
+    if (drawn.size.width < 1 || drawn.size.height < 1) return nil;
+    CGFloat u = (q.x - drawn.origin.x) / drawn.size.width;
+    CGFloat v = (q.y - drawn.origin.y) / drawn.size.height;
+    u = MIN(1.0, MAX(0.0, u));
+    v = MIN(1.0, MAX(0.0, v));
+    /* convertPoint already includes imageView flip transform. */
+    CGImageRef cg = img.CGImage;
+    size_t w = CGImageGetWidth(cg);
+    size_t h = CGImageGetHeight(cg);
+    if (w == 0 || h == 0) return nil;
+    NSInteger x = (NSInteger)MIN((NSInteger)w - 1, MAX(0, (NSInteger)(u * (CGFloat)w)));
+    NSInteger y = (NSInteger)MIN((NSInteger)h - 1, MAX(0, (NSInteger)(v * (CGFloat)h)));
+    unsigned char px[4] = {0, 0, 0, 0};
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(px, 1, 1, 8, 4, cs,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    if (!ctx) {
+        CGColorSpaceRelease(cs);
+        return nil;
+    }
+    CGContextSetBlendMode(ctx, kCGBlendModeCopy);
+    CGContextDrawImage(ctx, CGRectMake(-(CGFloat)x, -(CGFloat)y, (CGFloat)w, (CGFloat)h), cg);
+    CGContextRelease(ctx);
+    CGColorSpaceRelease(cs);
+    CGFloat a = px[3] / 255.0f;
+    if (a < 0.004f) {
+        return [UIColor colorWithRed:px[0] / 255.0f green:px[1] / 255.0f blue:px[2] / 255.0f alpha:1];
+    }
+    return [UIColor colorWithRed:(px[0] / 255.0f) / a
+                           green:(px[1] / 255.0f) / a
+                            blue:(px[2] / 255.0f) / a
+                           alpha:1];
 }
 
 @end

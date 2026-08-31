@@ -82,6 +82,9 @@
 - (void)beginPerspectiveMode;
 - (void)endPerspectiveMode;
 
+- (void)beginColorPickMode;
+- (void)endColorPickMode;
+
 - (void)resetTransform;
 - (void)resetAllSettings;
 

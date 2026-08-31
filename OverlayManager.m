@@ -66,6 +66,13 @@
 @property (nonatomic, assign) NSInteger setupAttempts;
 @property (nonatomic, weak) UIWindow *previousKeyWindow;
 @property (nonatomic, strong) UIView *toastView;
+@property (nonatomic, assign) BOOL colorPickModeEnabled;
+@property (nonatomic, assign) CGFloat pickerSavedOpacity;
+@property (nonatomic, assign) BOOL cropSessionValid;
+@property (nonatomic, assign) CGPoint cropSessionOrigin;
+@property (nonatomic, assign) CGSize cropSessionBase;
+@property (nonatomic, strong) UIView *pickerLoupe;
+@property (nonatomic, copy) NSString *pickedColorHex;
 
 - (UIView *)hitTestOverlayPoint:(CGPoint)point event:(UIEvent *)event;
 
@@ -540,10 +547,10 @@
 - (void)createQuickButtons {
     for (UIButton *b in self.quickButtons) [b removeFromSuperview];
     UIView *root = self.overlayWindow.rootViewController.view;
-    NSArray *titles = @[ @"✂️", @"🔒", @"👁", @"✨", @"📐" ];
-    NSArray *labels = @[ @"Kırp", @"Kilit", @"Göster", @"Warp", @"Perspektif" ];
+    NSArray *titles = @[ @"✂️", @"🔒", @"👁", @"✨", @"📐", @"🎨" ];
+    NSArray *labels = @[ @"Kırp", @"Kilit", @"Göster", @"Warp", @"Perspektif", @"Renk" ];
     NSMutableArray *btns = [NSMutableArray array];
-    for (NSInteger i = 0; i < 5; i++) {
+    for (NSInteger i = 0; i < 6; i++) {
         UIButton *b = [self makeRoundToolButton:titles[i]];
         b.tag = 900 + i;
         b.accessibilityLabel = labels[i];
@@ -556,7 +563,7 @@
 }
 
 - (void)refreshQuickButtonFaces {
-    if (self.quickButtons.count < 5) return;
+    if (self.quickButtons.count < 6) return;
     [self.quickButtons[1] setTitle:self.isLocked ? @"🔒" : @"🔓" forState:UIControlStateNormal];
     self.quickButtons[1].accessibilityLabel = self.isLocked ? @"Kilidi aç" : @"Kilitle";
     [self.quickButtons[2] setTitle:self.isOverlayVisible ? @"👁" : @"🙈" forState:UIControlStateNormal];
@@ -567,9 +574,9 @@
     if (!self.menuButton || self.quickButtons.count == 0) return;
     CGPoint hub = self.menuButton.center;
     CGRect b = self.overlayWindow.bounds;
-    CGFloat R = collapsed ? 0 : 86.0;
+    CGFloat R = collapsed ? 0 : 94.0;
     CGFloat toward = atan2(CGRectGetMidY(b) - hub.y, CGRectGetMidX(b) - hub.x);
-    CGFloat span = 160.0 * (CGFloat)M_PI / 180.0;
+    CGFloat span = 190.0 * (CGFloat)M_PI / 180.0;
     CGFloat a0 = toward - span * 0.5;
     NSInteger n = (NSInteger)self.quickButtons.count;
     for (NSInteger i = 0; i < n; i++) {
@@ -659,6 +666,10 @@
             [self hideQuickMenu];
             [self beginPerspectiveMode];
             break;
+        case 5:
+            [self hideQuickMenu];
+            [self beginColorPickMode];
+            break;
         default:
             break;
     }
@@ -683,6 +694,11 @@
     dbl.numberOfTapsRequired = 2;
     [self.overlayContainer addGestureRecognizer:dbl];
 
+    UITapGestureRecognizer *colorTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleColorTap:)];
+    colorTap.numberOfTapsRequired = 1;
+    colorTap.delegate = self;
+    [self.overlayContainer addGestureRecognizer:colorTap];
+
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
     lp.minimumPressDuration = 0.45;
     [self.overlayContainer addGestureRecognizer:lp];
@@ -693,6 +709,9 @@
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b {
+    if (_cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled || _colorPickModeEnabled) {
+        return NO;
+    }
     return YES;
 }
 
@@ -701,6 +720,18 @@
         return t.view == self.settingsContainerView;
     }
     BOOL editing = _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled;
+    if ([g isKindOfClass:[UITapGestureRecognizer class]] &&
+        ((UITapGestureRecognizer *)g).numberOfTapsRequired == 1 &&
+        g.view == self.overlayContainer) {
+        return _colorPickModeEnabled;
+    }
+    if (_colorPickModeEnabled) {
+        if ([g isKindOfClass:[UITapGestureRecognizer class]] &&
+            ((UITapGestureRecognizer *)g).numberOfTapsRequired == 2) {
+            return NO;
+        }
+        if (g == self.pinchGesture || g == self.rotationGesture) return NO;
+    }
     if (editing && (g == self.panGesture || g == self.pinchGesture || g == self.rotationGesture)) {
         return NO;
     }
@@ -714,6 +745,12 @@
     if (!self.overlayContainer) return;
     /* 2D affine and 3D layer transforms fight — keep UIView.transform identity. */
     self.overlayContainer.transform = CGAffineTransformIdentity;
+    if (_cropModeEnabled) {
+        /* Flatten during crop so scale/3D cannot look like a pan. */
+        self.overlayContainer.layer.transform = CATransform3DIdentity;
+        self.overlayContainer.layer.shouldRasterize = NO;
+        return;
+    }
     CATransform3D t = CATransform3DIdentity;
     t.m34 = -1.0 / 700.0;
     t = CATransform3DRotate(t, _pitchValue, 1, 0, 0);
@@ -727,6 +764,10 @@
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)g {
+    if (_colorPickModeEnabled) {
+        [self sampleColorFromGesture:g];
+        return;
+    }
     if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
     UIView *v = g.view;
     CGPoint t = [g translationInView:v.superview];
@@ -740,7 +781,7 @@
 }
 
 - (void)handlePinch:(UIPinchGestureRecognizer *)g {
-    if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
+    if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled || _colorPickModeEnabled) return;
     if (g.state == UIGestureRecognizerStateChanged) {
         _currentScaleValue = MAX(0.15, MIN(6.0, _currentScaleValue * g.scale));
         [self applyContainerTransform];
@@ -750,7 +791,7 @@
 }
 
 - (void)handleRotation:(UIRotationGestureRecognizer *)g {
-    if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
+    if (self.isLocked || _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled || _colorPickModeEnabled) return;
     if (g.state == UIGestureRecognizerStateChanged) {
         _currentRotationValue += g.rotation;
         [self applyContainerTransform];
@@ -760,20 +801,20 @@
 }
 
 - (void)handleDoubleTap:(UITapGestureRecognizer *)g {
-    if (self.isLocked || _cropModeEnabled) return;
+    if (self.isLocked || _cropModeEnabled || _colorPickModeEnabled) return;
     [self resetTransform];
     [self showToast:@"Konum sıfırlandı"];
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)g {
-    if (_cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled) return;
+    if (_cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled || _colorPickModeEnabled) return;
     if (g.state != UIGestureRecognizerStateBegan) return;
     [self toggleLock];
     [self showToast:self.isLocked ? @"Kilitlendi — dokunmalar oyuna geçer" : @"Kilit açıldı"];
 }
 
 - (void)clampOverlayToScreen {
-    if (!self.overlayContainer) return;
+    if (!self.overlayContainer || _cropModeEnabled) return;
     CGSize s = self.overlayWindow.bounds.size;
     CGPoint c = self.overlayContainer.center;
     c.x = MAX(24, MIN(s.width - 24, c.x));
@@ -840,7 +881,7 @@
         }
     }
 
-    BOOL editing = _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled;
+    BOOL editing = _cropModeEnabled || _warpModeEnabled || _perspectiveModeEnabled || _colorPickModeEnabled;
     if (self.overlayContainer && self.isOverlayVisible && !self.overlayContainer.hidden &&
         (!self.isLocked || editing)) {
         CGPoint p = [win convertPoint:point toView:self.overlayContainer];
@@ -1241,15 +1282,25 @@
     CATransform3D t = view.layer.transform;
     view.layer.transform = CATransform3DIdentity;
 
-    CGPoint origin = CGPointMake(view.center.x - view.bounds.size.width * 0.5,
-                                 view.center.y - view.bounds.size.height * 0.5);
-    if (keep) {
-        origin.x += (insets.left - old.left) * base.width;
-        origin.y += (insets.top - old.top) * base.height;
+    CGPoint origin;
+    if (_cropModeEnabled && _cropSessionValid) {
+        /* Frozen uncropped origin for the whole crop session — overlay does
+           not pan with the handle; only the pulled edge moves. */
+        origin = CGPointMake(_cropSessionOrigin.x + insets.left * _cropSessionBase.width,
+                             _cropSessionOrigin.y + insets.top * _cropSessionBase.height);
+    } else {
+        origin = CGPointMake(view.center.x - view.bounds.size.width * 0.5,
+                             view.center.y - view.bounds.size.height * 0.5);
+        if (keep) {
+            origin.x += (insets.left - old.left) * base.width;
+            origin.y += (insets.top - old.top) * base.height;
+        }
     }
     view.bounds = CGRectMake(0, 0, w, h);
     view.center = CGPointMake(origin.x + w * 0.5, origin.y + h * 0.5);
-    view.layer.transform = t;
+    if (!(_cropModeEnabled && _cropSessionValid)) {
+        view.layer.transform = t;
+    }
 
     _cropInsetsValue = insets;
     self.overlayView.cropInsets = insets;
@@ -1284,6 +1335,7 @@
     [self endCropMode];
     [self endWarpMode];
     [self endPerspectiveMode];
+    [self endColorPickMode];
 }
 
 - (BOOL)prepareEditMode {
@@ -1305,16 +1357,33 @@
     if (![self prepareEditMode]) return;
     [self endWarpMode];
     [self endPerspectiveMode];
+    [self endColorPickMode];
     _cropModeEnabled = YES;
-    self.overlayView.cropModeEnabled = YES;
     [self applyContainerTransform];
-    [self showEditBarTitle:@"Kırpma" reset:@selector(resetCrop) done:@selector(endCropMode)];
-    [self showToast:@"Tutamaçları sürükleyerek kırpın"];
+    {
+        UIView *view = self.overlayContainer;
+        CGSize base = self.overlayView.uncroppedSize;
+        if (base.width < 40 || base.height < 40) {
+            base = [self resolvedOverlaySize];
+            self.overlayView.uncroppedSize = base;
+        }
+        UIEdgeInsets in = _cropInsetsValue;
+        CGPoint origin = CGPointMake(view.center.x - view.bounds.size.width * 0.5,
+                                     view.center.y - view.bounds.size.height * 0.5);
+        _cropSessionOrigin = CGPointMake(origin.x - in.left * base.width,
+                                         origin.y - in.top * base.height);
+        _cropSessionBase = base;
+        _cropSessionValid = YES;
+    }
+    self.overlayView.cropModeEnabled = YES;
+    [self showEditBarTitle:@"Kırpma" resetTitle:@"Sıfırla" reset:@selector(resetCrop) done:@selector(endCropMode)];
+    [self showToast:@"Tutamaçları sürükleyin — overlay yerinde kalır"];
 }
 
 - (void)endCropMode {
     if (!_cropModeEnabled) return;
     _cropModeEnabled = NO;
+    _cropSessionValid = NO;
     self.overlayView.cropModeEnabled = NO;
     [self applyContainerTransform];
     [self hideCropBar];
@@ -1331,10 +1400,11 @@
     if (![self prepareEditMode]) return;
     [self endCropMode];
     [self endPerspectiveMode];
+    [self endColorPickMode];
     _warpModeEnabled = YES;
     self.overlayView.warpModeEnabled = YES;
     [self applyContainerTransform];
-    [self showEditBarTitle:@"Warp / Distort" reset:@selector(resetWarp) done:@selector(endWarpMode)];
+    [self showEditBarTitle:@"Warp / Distort" resetTitle:@"Sıfırla" reset:@selector(resetWarp) done:@selector(endWarpMode)];
     [self showToast:@"3×3 ızgara — köşeler distort, iç noktalar warp"];
 }
 
@@ -1360,10 +1430,11 @@
     if (![self prepareEditMode]) return;
     [self endCropMode];
     [self endWarpMode];
+    [self endColorPickMode];
     _perspectiveModeEnabled = YES;
     self.overlayView.perspectiveModeEnabled = YES;
     [self applyContainerTransform];
-    [self showEditBarTitle:@"Perspektif" reset:@selector(resetPerspective) done:@selector(endPerspectiveMode)];
+    [self showEditBarTitle:@"Perspektif" resetTitle:@"Sıfırla" reset:@selector(resetPerspective) done:@selector(endPerspectiveMode)];
     [self showToast:@"Kenar tutamaçları: pitch / yaw"];
 }
 
@@ -1376,7 +1447,7 @@
     [self saveCurrentState];
 }
 
-- (void)showEditBarTitle:(NSString *)titleText reset:(SEL)reset done:(SEL)done {
+- (void)showEditBarTitle:(NSString *)titleText resetTitle:(NSString *)resetTitle reset:(SEL)reset done:(SEL)done {
     [self.cropBar removeFromSuperview];
     UIView *root = self.overlayWindow.rootViewController.view;
     CGFloat w = MIN(340.0, root.bounds.size.width - 24.0);
@@ -1398,11 +1469,12 @@
     title.text = titleText;
     title.textColor = [UIColor whiteColor];
     title.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    title.tag = 701;
     [bar addSubview:title];
 
     UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     resetBtn.frame = CGRectMake(w - 176, 12, 78, 32);
-    [resetBtn setTitle:@"Sıfırla" forState:UIControlStateNormal];
+    [resetBtn setTitle:(resetTitle.length ? resetTitle : @"Sıfırla") forState:UIControlStateNormal];
     [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     resetBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     resetBtn.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.12];
@@ -1436,6 +1508,141 @@
 - (void)hideCropBar {
     [self.cropBar removeFromSuperview];
     self.cropBar = nil;
+}
+
+- (void)handleColorTap:(UITapGestureRecognizer *)g {
+    if (!_colorPickModeEnabled) return;
+    [self sampleColorFromGesture:g];
+}
+
+- (void)beginColorPickMode {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self beginColorPickMode]; });
+        return;
+    }
+    if (![self prepareEditMode]) return;
+    if (!self.overlayView.image) {
+        [self showToast:@"Önce bir görsel seçin"];
+        return;
+    }
+    [self endCropMode];
+    [self endWarpMode];
+    [self endPerspectiveMode];
+    _pickerSavedOpacity = _currentOpacityValue;
+    _colorPickModeEnabled = YES;
+    self.overlayContainer.hidden = NO;
+    self.isOverlayVisible = YES;
+    [_defaults setBool:YES forKey:kDefaultsOverlayVisible];
+    self.overlayContainer.alpha = 1.0;
+    [self showEditBarTitle:@"Dokunarak renk al" resetTitle:@"Kopyala" reset:@selector(copyPickedColor) done:@selector(endColorPickMode)];
+    {
+        UIView *swatch = [[UIView alloc] initWithFrame:CGRectMake(12, 14, 28, 28)];
+        swatch.backgroundColor = [UIColor whiteColor];
+        swatch.layer.cornerRadius = 8;
+        swatch.layer.borderWidth = 1.0 / [UIScreen mainScreen].scale;
+        swatch.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.35].CGColor;
+        swatch.tag = 703;
+        [self.cropBar addSubview:swatch];
+        UILabel *title = [self.cropBar viewWithTag:701];
+        if (title) {
+            CGFloat w = self.cropBar.bounds.size.width;
+            CGFloat h = self.cropBar.bounds.size.height;
+            title.frame = CGRectMake(48, 0, w - 220, h);
+            title.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightSemibold];
+            title.text = @"#------";
+        }
+    }
+    [self ensurePickerLoupe];
+    [self showToast:@"Opaklık %100 — bırakınca eski değere döner"];
+}
+
+- (void)endColorPickMode {
+    if (!_colorPickModeEnabled) return;
+    _colorPickModeEnabled = NO;
+    if (self.isOverlayVisible) {
+        self.overlayContainer.alpha = _pickerSavedOpacity;
+    }
+    [_pickerLoupe removeFromSuperview];
+    _pickerLoupe = nil;
+    [self hideCropBar];
+}
+
+- (void)ensurePickerLoupe {
+    if (_pickerLoupe) return;
+    UIView *root = self.overlayWindow.rootViewController.view;
+    UIView *loupe = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 84, 78)];
+    loupe.userInteractionEnabled = NO;
+    loupe.hidden = YES;
+    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(16, 0, 52, 52)];
+    dot.layer.cornerRadius = 26;
+    dot.layer.borderWidth = 3;
+    dot.layer.borderColor = [UIColor whiteColor].CGColor;
+    dot.layer.shadowColor = [UIColor blackColor].CGColor;
+    dot.layer.shadowOpacity = 0.45;
+    dot.layer.shadowRadius = 8;
+    dot.layer.shadowOffset = CGSizeMake(0, 3);
+    dot.tag = 1;
+    [loupe addSubview:dot];
+    UILabel *hex = [[UILabel alloc] initWithFrame:CGRectMake(0, 54, 84, 22)];
+    hex.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightSemibold];
+    hex.textAlignment = NSTextAlignmentCenter;
+    hex.textColor = [UIColor whiteColor];
+    hex.layer.shadowColor = [UIColor blackColor].CGColor;
+    hex.layer.shadowOpacity = 0.8;
+    hex.layer.shadowRadius = 2;
+    hex.layer.shadowOffset = CGSizeZero;
+    hex.tag = 2;
+    [loupe addSubview:hex];
+    [root addSubview:loupe];
+    _pickerLoupe = loupe;
+}
+
+- (NSString *)hexFromColor:(UIColor *)color {
+    if (!color) return @"#000000";
+    CGFloat r = 0, g = 0, b = 0, a = 1;
+    if (![color getRed:&r green:&g blue:&b alpha:&a]) {
+        CGFloat w = 0;
+        if ([color getWhite:&w alpha:&a]) {
+            r = g = b = w;
+        }
+    }
+    int R = (int)lround(MAX(0.0, MIN(1.0, r)) * 255.0);
+    int G = (int)lround(MAX(0.0, MIN(1.0, g)) * 255.0);
+    int B = (int)lround(MAX(0.0, MIN(1.0, b)) * 255.0);
+    return [NSString stringWithFormat:@"#%02X%02X%02X", R, G, B];
+}
+
+- (void)sampleColorFromGesture:(UIGestureRecognizer *)g {
+    if (!_colorPickModeEnabled || !self.overlayView) return;
+    CGPoint local = [g locationInView:self.overlayView];
+    UIColor *c = [self.overlayView colorAtPoint:local];
+    if (!c) return;
+    NSString *hex = [self hexFromColor:c];
+    _pickedColorHex = hex;
+    [self ensurePickerLoupe];
+    UIView *root = self.overlayWindow.rootViewController.view;
+    CGPoint win = [g locationInView:root];
+    self.pickerLoupe.hidden = NO;
+    self.pickerLoupe.center = CGPointMake(win.x, win.y - 58.0);
+    UIView *dot = [self.pickerLoupe viewWithTag:1];
+    dot.backgroundColor = c;
+    UILabel *hexLbl = (UILabel *)[self.pickerLoupe viewWithTag:2];
+    hexLbl.text = hex;
+    UIView *swatch = [self.cropBar viewWithTag:703];
+    swatch.backgroundColor = c;
+    UILabel *title = [self.cropBar viewWithTag:701];
+    title.text = hex;
+    [self.cropBar.superview bringSubviewToFront:self.cropBar];
+    [self.pickerLoupe.superview bringSubviewToFront:self.pickerLoupe];
+}
+
+- (void)copyPickedColor {
+    if (_pickedColorHex.length == 0) {
+        [self showToast:@"Önce bir renk seçin"];
+        return;
+    }
+    [UIPasteboard generalPasteboard].string = _pickedColorHex;
+    [self showToast:[NSString stringWithFormat:@"%@ kopyalandı", _pickedColorHex]];
 }
 
 - (void)resetTransform {

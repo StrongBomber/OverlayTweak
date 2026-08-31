@@ -1,8 +1,14 @@
 /**
  * OverlayManager.h — overlay lifecycle, gestures, persistence.
+ * Extended for CPM Image-to-Vinyl Automation (v2.0).
  */
 
 #import <UIKit/UIKit.h>
+
+@class CPMExecutionController;
+@class CPMAutoDrawViewController;
+
+NS_ASSUME_NONNULL_BEGIN
 
 @interface OverlayManager : NSObject
 
@@ -102,4 +108,21 @@
 
 - (void)showToast:(NSString *)text;
 
+// CPM Image-to-Vinyl Automation (v2.0)
+- (void)showAutoDrawPanel;
+- (void)hideAutoDrawPanel;
+- (void)startAutoDrawWithImage:(UIImage *)image roiRect:(CGRect)roiRect;
+- (void)pauseAutoDraw;
+- (void)resumeAutoDraw;
+- (void)stopAutoDraw;
+- (void)emergencyStopAutoDraw;
+- (void)clearAutoDrawSession;
+
+@property (nonatomic, strong, readonly, nullable) id executionController;
+@property (nonatomic, strong, readonly, nullable) id autoDrawViewController;
+@property (nonatomic, assign, readonly) BOOL isAutoDrawRunning;
+@property (nonatomic, assign, readonly) CGFloat autoDrawProgress;
+
 @end
+
+NS_ASSUME_NONNULL_END

@@ -1,0 +1,109 @@
+{
+  "calibrationID": "iphone14pro_portrait_default",
+  "screenSize": {"width": 390, "height": 844},
+  "scaleFactor": 1.0,
+  "isLandscape": false,
+  "anchors": [
+    {
+      "type": 0,
+      "center": {"x": 340, "y": 20},
+      "size": {"width": 50, "height": 50},
+      "displayName": "Add Shape",
+      "isValid": true
+    },
+    {
+      "type": 1,
+      "center": {"x": 60, "y": 120},
+      "size": {"width": 80, "height": 300},
+      "displayName": "Shape Selector",
+      "isValid": true
+    },
+    {
+      "type": 2,
+      "center": {"x": 320, "y": 150},
+      "size": {"width": 60, "height": 60},
+      "displayName": "Color Picker",
+      "isValid": true
+    },
+    {
+      "type": 3,
+      "center": {"x": 340, "y": 280},
+      "size": {"width": 200, "height": 20},
+      "displayName": "Red Slider",
+      "sliderMinX": 240, "sliderMaxX": 440,
+      "sliderMinY": 280, "sliderMaxY": 280,
+      "isValid": true
+    },
+    {
+      "type": 4,
+      "center": {"x": 340, "y": 320},
+      "size": {"width": 200, "height": 20},
+      "displayName": "Green Slider",
+      "sliderMinX": 240, "sliderMaxX": 440,
+      "sliderMinY": 320, "sliderMaxY": 320,
+      "isValid": true
+    },
+    {
+      "type": 5,
+      "center": {"x": 340, "y": 360},
+      "size": {"width": 200, "height": 20},
+      "displayName": "Blue Slider",
+      "sliderMinX": 240, "sliderMaxX": 440,
+      "sliderMinY": 360, "sliderMaxY": 360,
+      "isValid": true
+    },
+    {
+      "type": 6,
+      "center": {"x": 340, "y": 420},
+      "size": {"width": 200, "height": 20},
+      "displayName": "Scale Slider",
+      "sliderMinX": 240, "sliderMaxX": 440,
+      "sliderMinY": 420, "sliderMaxY": 420,
+      "isValid": true
+    },
+    {
+      "type": 7,
+      "center": {"x": 340, "y": 460},
+      "size": {"width": 200, "height": 20},
+      "displayName": "Rotate Slider",
+      "sliderMinX": 240, "sliderMaxX": 440,
+      "sliderMinY": 460, "sliderMaxY": 460,
+      "isValid": true
+    },
+    {
+      "type": 8,
+      "center": {"x": 340, "y": 520},
+      "size": {"width": 80, "height": 80},
+      "displayName": "Move Joystick",
+      "isValid": true
+    },
+    {
+      "type": 9,
+      "center": {"x": 340, "y": 680},
+      "size": {"width": 80, "height": 40},
+      "displayName": "Confirm",
+      "isValid": true
+    },
+    {
+      "type": 10,
+      "center": {"x": 260, "y": 680},
+      "size": {"width": 80, "height": 40},
+      "displayName": "Cancel",
+      "isValid": true
+    },
+    {
+      "type": 11,
+      "center": {"x": 100, "y": 400},
+      "size": {"width": 120, "height": 300},
+      "displayName": "Layer List",
+      "isValid": true
+    },
+    {
+      "type": 12,
+      "center": {"x": 340, "y": 730},
+      "size": {"width": 40, "height": 40},
+      "displayName": "Zoom Control",
+      "isValid": true
+    }
+  ]
+}

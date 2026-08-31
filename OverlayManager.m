@@ -26,6 +26,12 @@
 @property (nonatomic, strong, readwrite) UIView *overlayContainer;
 @property (nonatomic, assign, readwrite) BOOL isOverlayVisible;
 @property (nonatomic, assign, readwrite) BOOL isLocked;
+
+// CPM Automation properties
+@property (nonatomic, strong, readwrite, nullable) id executionController;
+@property (nonatomic, strong, readwrite, nullable) id autoDrawViewController;
+@property (nonatomic, assign, readwrite) BOOL isAutoDrawRunning;
+@property (nonatomic, assign, readwrite) CGFloat autoDrawProgress;
 @property (nonatomic, assign, readwrite) BOOL isSettingsVisible;
 
 @property (nonatomic, strong) OverlayView *overlayView;
@@ -1980,6 +1986,155 @@
 }
 
 #pragma mark - Toast
+
+#pragma mark - CPM Image-to-Vinyl Automation
+
+- (void)showAutoDrawPanel {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self showAutoDrawPanel]; });
+        return;
+    }
+    
+    if (self.isAutoDrawRunning && self.autoDrawViewController) {
+        [self autoDrawViewController:self.autoDrawViewController];
+        return;
+    }
+    
+    [self hideSettingsPanel];
+    
+    CPMAutoDrawViewController *vc = [[CPMAutoDrawViewController alloc] init];
+    vc.delegate = self;
+    vc.executionController = self.executionController;
+    
+    UIWindow *window = self.overlayWindow;
+    if (!window) return;
+    
+    UIView *dim = [[UIView alloc] initWithFrame:window.bounds];
+    dim.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.6];
+    dim.alpha = 0;
+    dim.userInteractionEnabled = YES;
+    
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideAutoDrawPanel)];
+    [dim addGestureRecognizer:tap];
+    
+    CGFloat pw = MIN(340.0, window.bounds.size.width - 30.0);
+    CGFloat ph = MIN(500.0, window.bounds.size.height - 60.0);
+    vc.view.frame = CGRectMake(0, 0, pw, ph);
+    vc.view.center = CGPointMake(CGRectGetMidX(dim.bounds), CGRectGetMidY(dim.bounds));
+    vc.view.layer.cornerRadius = 16;
+    vc.view.clipsToBounds = YES;
+    vc.view.layer.shadowColor = [UIColor blackColor].CGColor;
+    vc.view.layer.shadowOpacity = 0.4;
+    vc.view.layer.shadowRadius = 20;
+    vc.view.layer.shadowOffset = CGSizeMake(0, 10);
+    
+    [window.rootViewController.view addSubview:dim];
+    [window.rootViewController.view addSubview:vc.view];
+    
+    [UIView animateWithDuration:0.3 animations:^{
+        dim.alpha = 1;
+        vc.view.transform = CGAffineTransformIdentity;
+    }];
+    
+    self.autoDrawViewController = vc;
+}
+
+- (void)hideAutoDrawPanel {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self hideAutoDrawPanel]; });
+        return;
+    }
+    
+    UIView *dim = nil;
+    UIView *vcView = nil;
+    
+    if (self.autoDrawViewController) {
+        vcView = self.autoDrawViewController.view;
+    }
+    
+    for (UIView *subview in [self.overlayWindow.rootViewController.view subviews]) {
+        if ([subview isKindOfClass:[UIView class]] && subview.backgroundColor && subview.backgroundColor.alpha < 1.0) {
+            if (subview.alpha < 1.0 && subview.bounds.size.width > 100) {
+                dim = subview;
+                break;
+            }
+        }
+    }
+    
+    if (!dim && !vcView) return;
+    
+    [UIView animateWithDuration:0.2 animations:^{
+        if (dim) dim.alpha = 0;
+        if (vcView) vcView.alpha = 0;
+    } completion:^(BOOL f) {
+        [vcView removeFromSuperview];
+        [dim removeFromSuperview];
+        self.autoDrawViewController = nil;
+        self.executionController = nil;
+    }];
+}
+
+- (void)autoDrawViewController:(id)controller {
+    [self hideAutoDrawPanel];
+}
+
+- (void)startAutoDrawWithImage:(UIImage *)image roiRect:(CGRect)roiRect {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self startAutoDrawWithImage:image roiRect:roiRect]; });
+        return;
+    }
+    
+    if (self.isAutoDrawRunning) {
+        [self stopAutoDraw];
+    }
+    
+    self.executionController = [[CPMExecutionController alloc] init];
+    self.executionController.delegate = self;
+    
+    [self.executionController startAutomationWithImage:image roiRect:roiRect];
+    
+    if (!self.autoDrawViewController) {
+        [self showAutoDrawPanel];
+    }
+    
+    [self showToast:@"Auto-Draw started"];
+}
+
+- (void)pauseAutoDraw {
+    if ([self.executionController isPaused]) {
+        [self.executionController resumeAutomation];
+    } else {
+        [self.executionController pauseAutomation];
+    }
+    [self showToast:[self.executionController isPaused] ? @"Auto-Draw paused" : @"Auto-Draw resumed"];
+}
+
+- (void)resumeAutoDraw {
+    [self pauseAutoDraw];
+}
+
+- (void)stopAutoDraw {
+    [self.executionController stopAutomation];
+    [self showToast:@"Auto-Draw stopped"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.executionController = nil;
+    });
+}
+
+- (void)emergencyStopAutoDraw {
+    [self.executionController emergencyStop];
+    [self showToast:@"🚨 EMERGENCY STOP"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.executionController = nil;
+    });
+}
+
+- (void)clearAutoDrawSession {
+    self.executionController = nil;
+    self.autoDrawViewController = nil;
+    [self hideAutoDrawPanel];
+    [self showToast:@"Session cleared"];
+}
 
 - (void)showToast:(NSString *)text {
     if (![NSThread isMainThread]) {

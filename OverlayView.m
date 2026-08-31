@@ -26,6 +26,7 @@ enum {
 @property (nonatomic, strong) UIImageView *imageView;
 @property (nonatomic, strong) UILabel *placeholderLabel;
 @property (nonatomic, strong) CAShapeLayer *gridLayer;
+@property (nonatomic, strong) CAShapeLayer *cropDimLayer;
 @property (nonatomic, strong) CAShapeLayer *cropFrameLayer;
 @property (nonatomic, strong) CAShapeLayer *cropGuideLayer;
 @property (nonatomic, strong) CAShapeLayer *warpGridLayer;
@@ -33,7 +34,10 @@ enum {
 @property (nonatomic, strong) NSArray<UIView *> *cropHandles;
 @property (nonatomic, strong) NSArray<UIView *> *warpHandles;
 @property (nonatomic, strong) NSArray<UIView *> *perspHandles;
-@property (nonatomic, assign) CGRect cropSessionWinRect;
+@property (nonatomic, assign) unsigned char *colorBuf;
+@property (nonatomic, assign) NSInteger colorBufW;
+@property (nonatomic, assign) NSInteger colorBufH;
+@property (nonatomic, assign) CGFloat colorBufScale;
 @end
 
 @implementation OverlayView
@@ -280,6 +284,7 @@ enum {
     _cropInsets = [self clampedInsets:insets];
     [self applyCropLayout];
     [self refreshDisplayedImage];
+    if (_cropModeEnabled) [self layoutCropChrome];
 }
 
 - (void)setWarpPoints:(NSArray<NSValue *> *)warpPoints {
@@ -334,13 +339,29 @@ enum {
     return CGSizeMake(w, h);
 }
 
+- (CGRect)cropRectInBounds {
+    CGRect b = self.bounds;
+    CGFloat l = _cropInsets.left * b.size.width;
+    CGFloat r = _cropInsets.right * b.size.width;
+    CGFloat t = _cropInsets.top * b.size.height;
+    CGFloat bot = _cropInsets.bottom * b.size.height;
+    CGFloat w = MAX(40.0, b.size.width - l - r);
+    CGFloat h = MAX(40.0, b.size.height - t - bot);
+    return CGRectMake(l, t, w, h);
+}
+
 - (void)applyCropLayout {
     CGSize base = [self effectiveUncroppedSize];
     CGFloat l = _cropInsets.left * base.width;
     CGFloat t = _cropInsets.top * base.height;
     _clipView.frame = self.bounds;
     BOOL warped = ![[self class] warpPointsAreIdentity:_warpPoints];
-    if (warped) {
+    if (_cropModeEnabled) {
+        /* Full uncropped image stays put; only the crop rectangle moves. */
+        _clipView.clipsToBounds = YES;
+        _imageView.frame = self.bounds;
+        _placeholderLabel.frame = self.bounds;
+    } else if (warped) {
         _clipView.clipsToBounds = NO;
         _imageView.frame = _clipView.bounds;
         _placeholderLabel.frame = _clipView.bounds;
@@ -435,12 +456,8 @@ enum {
     if (on) {
         _warpModeEnabled = NO;
         _perspectiveModeEnabled = NO;
-        CGSize base = [self effectiveUncroppedSize];
-        CGRect local = CGRectMake(-_cropInsets.left * base.width,
-                                  -_cropInsets.top * base.height,
-                                  base.width, base.height);
-        _cropSessionWinRect = [self convertRect:local toView:nil];
     }
+    [self applyCropLayout];
     [self updateEditChrome];
 }
 
@@ -466,6 +483,7 @@ enum {
     BOOL crop = _cropModeEnabled;
     BOOL warp = _warpModeEnabled;
     BOOL persp = _perspectiveModeEnabled;
+    _cropDimLayer.hidden = !crop;
     _cropFrameLayer.hidden = !crop;
     _cropGuideLayer.hidden = !crop;
     _warpGridLayer.hidden = !warp;
@@ -509,13 +527,14 @@ enum {
 
 - (void)handleCropPan:(UIPanGestureRecognizer *)g {
     if (!_cropModeEnabled) return;
-    CGRect wr = _cropSessionWinRect;
-    if (wr.size.width < 1 || wr.size.height < 1) return;
+    CGSize sz = self.bounds.size;
+    if (sz.width < 1 || sz.height < 1) return;
     if (g.state == UIGestureRecognizerStateBegan) return;
 
-    CGPoint p = [g locationInView:nil];
-    CGFloat u = (p.x - wr.origin.x) / wr.size.width;
-    CGFloat v = (p.y - wr.origin.y) / wr.size.height;
+    /* View stays still. Insets are finger vs the uncropped bounds. */
+    CGPoint p = [g locationInView:self];
+    CGFloat u = p.x / sz.width;
+    CGFloat v = p.y / sz.height;
     UIEdgeInsets insets = _cropInsets;
     NSInteger tag = g.view.tag;
     if (tag == kOLHandleL || tag == kOLHandleTL || tag == kOLHandleBL) insets.left = u;
@@ -576,22 +595,27 @@ enum {
 #pragma mark - Chrome layout
 
 - (void)layoutEdgeHandles:(NSArray<UIView *> *)handles {
-    CGRect b = self.bounds;
+    [self layoutEdgeHandles:handles inRect:self.bounds];
+}
+
+- (void)layoutEdgeHandles:(NSArray<UIView *> *)handles inRect:(CGRect)b {
     CGFloat s = 28.0;
-    CGFloat midX = b.size.width * 0.5 - s * 0.5;
-    CGFloat midY = b.size.height * 0.5 - s * 0.5;
-    CGFloat maxX = b.size.width - s * 0.5;
-    CGFloat maxY = b.size.height - s * 0.5;
+    CGFloat midX = b.origin.x + b.size.width * 0.5 - s * 0.5;
+    CGFloat midY = b.origin.y + b.size.height * 0.5 - s * 0.5;
+    CGFloat minX = b.origin.x - s * 0.5;
+    CGFloat minY = b.origin.y - s * 0.5;
+    CGFloat maxX = CGRectGetMaxX(b) - s * 0.5;
+    CGFloat maxY = CGRectGetMaxY(b) - s * 0.5;
     for (UIView *h in handles) {
         CGRect f = CGRectMake(0, 0, s, s);
         switch (h.tag) {
-            case kOLHandleL:  f.origin = CGPointMake(-s * 0.5, midY); break;
+            case kOLHandleL:  f.origin = CGPointMake(minX, midY); break;
             case kOLHandleR:  f.origin = CGPointMake(maxX, midY); break;
-            case kOLHandleT:  f.origin = CGPointMake(midX, -s * 0.5); break;
+            case kOLHandleT:  f.origin = CGPointMake(midX, minY); break;
             case kOLHandleB:  f.origin = CGPointMake(midX, maxY); break;
-            case kOLHandleTL: f.origin = CGPointMake(-s * 0.5, -s * 0.5); break;
-            case kOLHandleTR: f.origin = CGPointMake(maxX, -s * 0.5); break;
-            case kOLHandleBL: f.origin = CGPointMake(-s * 0.5, maxY); break;
+            case kOLHandleTL: f.origin = CGPointMake(minX, minY); break;
+            case kOLHandleTR: f.origin = CGPointMake(maxX, minY); break;
+            case kOLHandleBL: f.origin = CGPointMake(minX, maxY); break;
             case kOLHandleBR: f.origin = CGPointMake(maxX, maxY); break;
             default: break;
         }
@@ -600,18 +624,20 @@ enum {
 }
 
 - (void)addCornerTicks:(UIBezierPath *)frame rect:(CGRect)b tick:(CGFloat)tick {
-    [frame moveToPoint:CGPointMake(1, tick)];
-    [frame addLineToPoint:CGPointMake(1, 1)];
-    [frame addLineToPoint:CGPointMake(tick, 1)];
-    [frame moveToPoint:CGPointMake(b.size.width - tick, 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, tick)];
-    [frame moveToPoint:CGPointMake(1, b.size.height - tick)];
-    [frame addLineToPoint:CGPointMake(1, b.size.height - 1)];
-    [frame addLineToPoint:CGPointMake(tick, b.size.height - 1)];
-    [frame moveToPoint:CGPointMake(b.size.width - tick, b.size.height - 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - 1)];
-    [frame addLineToPoint:CGPointMake(b.size.width - 1, b.size.height - tick)];
+    CGFloat x0 = b.origin.x + 1, y0 = b.origin.y + 1;
+    CGFloat x1 = CGRectGetMaxX(b) - 1, y1 = CGRectGetMaxY(b) - 1;
+    [frame moveToPoint:CGPointMake(x0, y0 + tick)];
+    [frame addLineToPoint:CGPointMake(x0, y0)];
+    [frame addLineToPoint:CGPointMake(x0 + tick, y0)];
+    [frame moveToPoint:CGPointMake(x1 - tick, y0)];
+    [frame addLineToPoint:CGPointMake(x1, y0)];
+    [frame addLineToPoint:CGPointMake(x1, y0 + tick)];
+    [frame moveToPoint:CGPointMake(x0, y1 - tick)];
+    [frame addLineToPoint:CGPointMake(x0, y1)];
+    [frame addLineToPoint:CGPointMake(x0 + tick, y1)];
+    [frame moveToPoint:CGPointMake(x1 - tick, y1)];
+    [frame addLineToPoint:CGPointMake(x1, y1)];
+    [frame addLineToPoint:CGPointMake(x1, y1 - tick)];
 }
 
 - (void)layoutCropChrome {
@@ -712,61 +738,125 @@ enum {
 }
 
 
-- (CGRect)imageRectInImageView {
-    CGSize bsz = _imageView.bounds.size;
-    UIImage *img = _imageView.image ?: _image;
-    if (!img || bsz.width < 1 || bsz.height < 1) return CGRectZero;
-    CGSize isz = img.size;
-    if (isz.width < 1 || isz.height < 1) return CGRectMake(0, 0, bsz.width, bsz.height);
-    UIViewContentMode mode = _imageContentMode;
-    if (mode == UIViewContentModeScaleToFill) {
-        return CGRectMake(0, 0, bsz.width, bsz.height);
+- (void)dealloc {
+    [self endColorSampling];
+}
+
+- (void)endColorSampling {
+    if (_colorBuf) {
+        free(_colorBuf);
+        _colorBuf = NULL;
     }
-    CGFloat sx = bsz.width / isz.width;
-    CGFloat sy = bsz.height / isz.height;
-    CGFloat s = (mode == UIViewContentModeScaleAspectFill) ? MAX(sx, sy) : MIN(sx, sy);
-    CGFloat w = isz.width * s;
-    CGFloat h = isz.height * s;
-    return CGRectMake((bsz.width - w) * 0.5, (bsz.height - h) * 0.5, w, h);
+    _colorBufW = 0;
+    _colorBufH = 0;
+    _colorBufScale = 1;
+}
+
+- (void)beginColorSampling {
+    [self endColorSampling];
+    self.layer.shouldRasterize = NO;
+    [self layoutIfNeeded];
+    CGSize sz = self.bounds.size;
+    if (sz.width < 2 || sz.height < 2) return;
+    CGFloat scale = [UIScreen mainScreen].scale;
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat defaultFormat];
+    fmt.scale = scale;
+    fmt.opaque = NO;
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:sz format:fmt];
+    /* Overlay window is never key — drawViewHierarchy is unreliable. */
+    UIImage *snap = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        [self.layer renderInContext:ctx.CGContext];
+    }];
+    CGImageRef cg = snap.CGImage;
+    if (!cg) return;
+    NSInteger w = (NSInteger)CGImageGetWidth(cg);
+    NSInteger h = (NSInteger)CGImageGetHeight(cg);
+    if (w < 1 || h < 1) return;
+    size_t bytes = (size_t)w * (size_t)h * 4;
+    unsigned char *buf = (unsigned char *)calloc(1, bytes);
+    if (!buf) return;
+    CGColorSpaceRef cs = NULL;
+    if (@available(iOS 9.0, *)) {
+        cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    }
+    if (!cs) cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef bctx = CGBitmapContextCreate(buf, (size_t)w, (size_t)h, 8, (size_t)w * 4, cs,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if (!bctx) {
+        free(buf);
+        return;
+    }
+    /* Snapshot is UIKit y-down; CGContextDrawImage is y-up — flip so y matches. */
+    CGContextTranslateCTM(bctx, 0, (CGFloat)h);
+    CGContextScaleCTM(bctx, 1, -1);
+    CGContextSetBlendMode(bctx, kCGBlendModeCopy);
+    CGContextDrawImage(bctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), cg);
+    CGContextRelease(bctx);
+    _colorBuf = buf;
+    _colorBufW = w;
+    _colorBufH = h;
+    _colorBufScale = scale;
+}
+
+- (BOOL)colorBufferPixelAtX:(NSInteger)x y:(NSInteger)y r:(int *)r g:(int *)g b:(int *)b {
+    if (!_colorBuf || x < 0 || y < 0 || x >= _colorBufW || y >= _colorBufH) return NO;
+    unsigned char *px = _colorBuf + ((size_t)y * (size_t)_colorBufW + (size_t)x) * 4;
+    int A = px[3];
+    if (A < 1) {
+        *r = 0; *g = 0; *b = 0;
+        return YES;
+    }
+    if (A >= 255) {
+        *r = px[0]; *g = px[1]; *b = px[2];
+        return YES;
+    }
+    *r = MIN(255, (px[0] * 255) / A);
+    *g = MIN(255, (px[1] * 255) / A);
+    *b = MIN(255, (px[2] * 255) / A);
+    return YES;
 }
 
 - (UIColor *)colorAtPoint:(CGPoint)point {
-    UIImage *img = _imageView.image ?: _image;
-    if (!img || !img.CGImage) return nil;
-    CGPoint q = [self convertPoint:point toView:_imageView];
-    CGRect drawn = [self imageRectInImageView];
-    if (drawn.size.width < 1 || drawn.size.height < 1) return nil;
-    CGFloat u = (q.x - drawn.origin.x) / drawn.size.width;
-    CGFloat v = (q.y - drawn.origin.y) / drawn.size.height;
-    u = MIN(1.0, MAX(0.0, u));
-    v = MIN(1.0, MAX(0.0, v));
-    /* convertPoint already includes imageView flip transform. */
-    CGImageRef cg = img.CGImage;
-    size_t w = CGImageGetWidth(cg);
-    size_t h = CGImageGetHeight(cg);
-    if (w == 0 || h == 0) return nil;
-    NSInteger x = (NSInteger)MIN((NSInteger)w - 1, MAX(0, (NSInteger)(u * (CGFloat)w)));
-    NSInteger y = (NSInteger)MIN((NSInteger)h - 1, MAX(0, (NSInteger)(v * (CGFloat)h)));
-    unsigned char px[4] = {0, 0, 0, 0};
-    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(px, 1, 1, 8, 4, cs,
-        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-    if (!ctx) {
-        CGColorSpaceRelease(cs);
-        return nil;
-    }
-    CGContextSetBlendMode(ctx, kCGBlendModeCopy);
-    CGContextDrawImage(ctx, CGRectMake(-(CGFloat)x, -(CGFloat)y, (CGFloat)w, (CGFloat)h), cg);
-    CGContextRelease(ctx);
-    CGColorSpaceRelease(cs);
-    CGFloat a = px[3] / 255.0f;
-    if (a < 0.004f) {
-        return [UIColor colorWithRed:px[0] / 255.0f green:px[1] / 255.0f blue:px[2] / 255.0f alpha:1];
-    }
-    return [UIColor colorWithRed:(px[0] / 255.0f) / a
-                           green:(px[1] / 255.0f) / a
-                            blue:(px[2] / 255.0f) / a
-                           alpha:1];
+    if (!_colorBuf) [self beginColorSampling];
+    if (!_colorBuf) return nil;
+    NSInteger x = (NSInteger)floor(point.x * _colorBufScale);
+    NSInteger y = (NSInteger)floor(point.y * _colorBufScale);
+    x = MAX(0, MIN(_colorBufW - 1, x));
+    y = MAX(0, MIN(_colorBufH - 1, y));
+    int R = 0, G = 0, B = 0;
+    if (![self colorBufferPixelAtX:x y:y r:&R g:&G b:&B]) return nil;
+    return [UIColor colorWithRed:R / 255.0 green:G / 255.0 blue:B / 255.0 alpha:1];
+}
+
+- (UIImage *)loupeImageAtPoint:(CGPoint)point {
+    if (!_colorBuf) [self beginColorSampling];
+    if (!_colorBuf) return nil;
+    const NSInteger radius = 6; /* 13×13 source pixels */
+    NSInteger cx = (NSInteger)floor(point.x * _colorBufScale);
+    NSInteger cy = (NSInteger)floor(point.y * _colorBufScale);
+    NSInteger dim = radius * 2 + 1;
+    const NSInteger cell = 10;
+    CGSize out = CGSizeMake(dim * cell, dim * cell);
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:out];
+    return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGContextRef c = ctx.CGContext;
+        for (NSInteger dy = -radius; dy <= radius; dy++) {
+            for (NSInteger dx = -radius; dx <= radius; dx++) {
+                int R = 0, G = 0, B = 0;
+                NSInteger px = cx + dx, py = cy + dy;
+                if (![self colorBufferPixelAtX:px y:py r:&R g:&G b:&B]) {
+                    R = G = B = 20;
+                }
+                CGContextSetRGBFillColor(c, R / 255.0, G / 255.0, B / 255.0, 1);
+                CGContextFillRect(c, CGRectMake((dx + radius) * cell, (dy + radius) * cell, cell, cell));
+            }
+        }
+        CGFloat mid = radius * cell;
+        CGContextSetRGBStrokeColor(c, 1, 1, 1, 0.95);
+        CGContextSetLineWidth(c, 1.5);
+        CGContextStrokeRect(c, CGRectMake(mid, mid, cell, cell));
+    }];
 }
 
 @end

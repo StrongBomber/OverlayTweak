@@ -290,7 +290,7 @@
     [self.contentView addSubview:cropModeBtn];
     y += 48;
     UILabel *cropHint = [[UILabel alloc] initWithFrame:CGRectMake(p + 2, y, sw - 4, 34)];
-    cropHint.text = @"Tutamaçlar kenarı keser; overlay kaymaz, kalan pikseller yerinde kalır.";
+    cropHint.text = @"Görsel yerinde kalır; sadece kırpma çerçevesi hareket eder. Tamam deyince uygulanır.";
     cropHint.font = [UIFont systemFontOfSize:11];
     cropHint.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.42];
     cropHint.numberOfLines = 2;

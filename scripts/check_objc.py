@@ -132,8 +132,8 @@ def main() -> int:
         errors.append("OverlayManager.m missing CATransform3D perspective")
     if "kDefaultsPitch" not in common or "kDefaultsCropL" not in common:
         errors.append("OverlayCommon.h missing pitch/crop defaults keys")
-    if "1.8.0" not in common:
-        errors.append("OverlayCommon.h version is not 1.8.0")
+    if "1.9.0" not in common:
+        errors.append("OverlayCommon.h version is not 1.9.0")
     if "kDefaultsWarpPts" not in common:
         errors.append("OverlayCommon.h missing warp defaults key")
     if "beginWarpMode" not in mgr_h or "beginPerspectiveMode" not in mgr_h:
@@ -144,14 +144,18 @@ def main() -> int:
         errors.append("OverlayView.h missing perspectiveModeEnabled")
     if "- (void)menuLongPressed" not in mgr_m or "showQuickMenu" not in mgr_m:
         errors.append("OverlayManager.m missing long-press quick menu method")
-    if "cropSessionWinRect" not in view_m:
-        errors.append("OverlayView.m missing stable crop-drag session anchor")
+    if "cropRectInBounds" not in view_m:
+        errors.append("OverlayView.m missing cropRectInBounds (still-image crop box)")
+    if "beginColorSampling" not in view_h:
+        errors.append("OverlayView.h missing beginColorSampling")
     if "colorAtPoint" not in view_h:
         errors.append("OverlayView.h missing colorAtPoint")
     if "beginColorPickMode" not in mgr_h:
         errors.append("OverlayManager.h missing beginColorPickMode")
-    if "_cropSessionOrigin" not in mgr_m or "_colorPickModeEnabled" not in mgr_m:
-        errors.append("OverlayManager.m missing frozen crop session or color picker")
+    if "pickerCatcher" not in mgr_m or "_colorPickModeEnabled" not in mgr_m:
+        errors.append("OverlayManager.m missing color picker catcher")
+    if "_cropSessionOrigin" not in mgr_m:
+        errors.append("OverlayManager.m missing crop session origin")
     if "clampedCropInsets" not in view_h:
         errors.append("OverlayView.h missing clampedCropInsets")
     if "CoreImage" not in view_m:
@@ -174,7 +178,9 @@ def main() -> int:
         ("showQuickMenu", mgr_m),
         ("Renk seç (eyedropper)", settings),
         ("beginColorPickMode", mgr_m),
-        ("cropSessionWinRect", view_m),
+        ("cropRectInBounds", view_m),
+        ("beginColorSampling", view_m),
+        ("pickerCatcher", mgr_m),
     ):
         if needle not in where:
             errors.append(f"UI missing {needle}")
@@ -222,7 +228,7 @@ def main() -> int:
     print("OK: sources look consistent")
     print(f"  Settings properties: {len(declared)}")
     print(f"  OverlayManager public selectors: {len(public)}")
-    print(f"  Version: 1.8.0")
+    print(f"  Version: 1.9.0")
     print("  Workflow YAML: valid")
     return 0
 

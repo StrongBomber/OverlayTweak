@@ -43,6 +43,10 @@
 - (CGSize)croppedSize;
 - (UIEdgeInsets)clampedCropInsets:(UIEdgeInsets)insets;
 - (void)resetWarp;
+- (CGRect)cropRectInBounds;
+- (void)beginColorSampling;
+- (void)endColorSampling;
 - (UIColor *)colorAtPoint:(CGPoint)point;
+- (UIImage *)loupeImageAtPoint:(CGPoint)point;
 
 @end

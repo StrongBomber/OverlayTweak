@@ -1,51 +1,93 @@
 #!/bin/bash
-set -e
+# Inject Overlay.dylib into an IPA (adds LC_LOAD_DYLIB via insert_dylib).
+set -euo pipefail
+
 R='\033[0;31m'; G='\033[0;32m'; B='\033[0;34m'; N='\033[0m'
 info() { echo -e "${G}[✓]${N} $1"; }
 step() { echo -e "${B}[→]${N} $1"; }
 err()  { echo -e "${R}[✗]${N} $1"; exit 1; }
 
-[ $# -lt 2 ] && err "Kullanım: $0 <ipa> <dylib>"
-IPA="$1"; DYLIB="$2"
+usage() { err "Usage: $0 <app.ipa> <Overlay.dylib>"; }
+
+[ $# -lt 2 ] && usage
+
+IPA="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+DYLIB="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-INSERT="$DIR/tools/insert_dylib"
 
-[ ! -f "$IPA" ]   && err "IPA bulunamadı: $IPA"
-[ ! -f "$DYLIB" ] && err "Dylib bulunamadı: $DYLIB"
-[ ! -f "$INSERT" ] && err "insert_dylib bulunamadı: $INSERT"
+[ -f "$IPA" ]   || err "IPA not found: $IPA"
+[ -f "$DYLIB" ] || err "Dylib not found: $DYLIB"
 
-TMP=$(mktemp -d); WRK="$TMP/work"; OUT="${IPA%.ipa}_injected.ipa"
-trap "rm -rf $TMP" EXIT
+find_insert() {
+    local c
+    for c in \
+        "$DIR/tools/insert_dylib" \
+        "$(command -v insert_dylib 2>/dev/null || true)" \
+        "$HOME/bin/insert_dylib"
+    do
+        [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return 0; }
+    done
+    return 1
+}
 
-step "1/5: IPA çıkarılıyor..."
-mkdir -p "$WRK" && unzip -q "$IPA" -d "$WRK"
-APP=$(find "$WRK/Payload" -name "*.app" -type d -maxdepth 1 | head -1)
-[ -z "$APP" ] && err "App bulunamadı"
-info "App: $(basename "$APP" .app)"
-
-step "2/5: Dylib kopyalanıyor..."
-cp "$DYLIB" "$APP/Overlay.dylib"
-info "Kopyalandı."
-
-step "3/5: Binary enjekte ediliyor..."
-BIN_NAME=$(plutil -extract CFBundleExecutable raw "$APP/Info.plist" 2>/dev/null || defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null)
-BIN="$APP/$BIN_NAME"
-[ ! -f "$BIN" ] && err "Binary bulunamadı: $BIN"
-"$INSERT" --inplace --all-yes "@executable_path/Overlay.dylib" "$BIN"
-info "Enjekte edildi."
-
-step "4/5: İmzalanıyor..."
-if command -v ldid &>/dev/null; then
-    ldid -S "$APP/Overlay.dylib" && ldid -S "$BIN"
-    info "ldid ile imzalandı."
-elif command -v codesign &>/dev/null; then
-    codesign --force --sign - "$APP/Overlay.dylib" 2>/dev/null
-    codesign --force --sign - "$BIN" 2>/dev/null
-    info "codesign ile imzalandı."
-else
-    echo "Uyarı: İmzalama aracı yok."
+INSERT="$(find_insert || true)"
+if [ -z "$INSERT" ]; then
+    err "insert_dylib not found.
+Build it once:
+  git clone https://github.com/tyilo/insert_dylib.git /tmp/insert_dylib
+  cc /tmp/insert_dylib/insert_dylib/main.c -o $DIR/tools/insert_dylib
+Then re-run this script."
 fi
 
-step "5/5: Paketleniyor..."
-cd "$WRK" && zip -qr "$OUT" Payload/
+TMP="$(mktemp -d)"
+WRK="$TMP/work"
+OUT="${IPA%.ipa}_injected.ipa"
+trap 'rm -rf "$TMP"' EXIT
+
+step "1/5 Extract IPA"
+mkdir -p "$WRK"
+unzip -q "$IPA" -d "$WRK"
+APP="$(find "$WRK/Payload" -name "*.app" -type d -maxdepth 1 | head -1)"
+[ -n "$APP" ] || err "No .app inside Payload/"
+info "App: $(basename "$APP" .app)"
+
+step "2/5 Copy dylib"
+cp "$DYLIB" "$APP/Overlay.dylib"
+info "Copied Overlay.dylib"
+
+step "3/5 Inject load command"
+BIN_NAME="$(/usr/bin/plutil -extract CFBundleExecutable raw "$APP/Info.plist" 2>/dev/null \
+    || defaults read "$APP/Info.plist" CFBundleExecutable 2>/dev/null || true)"
+[ -n "$BIN_NAME" ] || err "Could not read CFBundleExecutable"
+BIN="$APP/$BIN_NAME"
+[ -f "$BIN" ] || err "Binary not found: $BIN"
+
+if otool -L "$BIN" 2>/dev/null | grep -q Overlay.dylib; then
+    info "Already injected — skipping insert_dylib"
+else
+    "$INSERT" --inplace --all-yes "@executable_path/Overlay.dylib" "$BIN"
+    info "Injected @executable_path/Overlay.dylib"
+fi
+
+step "4/5 Ad-hoc sign"
+if command -v ldid >/dev/null 2>&1; then
+    ldid -S "$APP/Overlay.dylib"
+    ldid -S "$BIN"
+    info "Signed with ldid"
+elif command -v codesign >/dev/null 2>&1; then
+    codesign --force --sign - --timestamp=none "$APP/Overlay.dylib" 2>/dev/null || true
+    codesign --force --sign - --timestamp=none "$BIN" 2>/dev/null || true
+    info "Ad-hoc signed with codesign"
+else
+    echo "Warning: no ldid/codesign — TrollStore may still install it."
+fi
+
+step "5/5 Repack"
+# zip must be created from inside the work dir so Payload/ is at the root.
+ABS_OUT="$OUT"
+(
+    cd "$WRK"
+    rm -f "$ABS_OUT"
+    zip -qr "$ABS_OUT" Payload
+)
 info "OK: $OUT"

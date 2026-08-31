@@ -1,19 +1,8 @@
 /**
- * ==============================================================================
- * OverlayManager.h
- * ==============================================================================
+ * OverlayManager.h — overlay lifecycle, gestures, persistence.
  */
 
 #import <UIKit/UIKit.h>
-
-extern NSString *const kDefaultsOpacity;
-extern NSString *const kDefaultsPositionX;
-extern NSString *const kDefaultsPositionY;
-extern NSString *const kDefaultsScale;
-extern NSString *const kDefaultsRotation;
-extern NSString *const kDefaultsImageBookmark;
-extern NSString *const kDefaultsIsLocked;
-extern NSString *const kDefaultsOverlayVisible;
 
 @interface OverlayManager : NSObject
 
@@ -26,17 +15,91 @@ extern NSString *const kDefaultsOverlayVisible;
 @property (nonatomic, assign, readonly) BOOL isSettingsVisible;
 
 - (void)setup;
+
 - (void)showOverlay;
 - (void)hideOverlay;
 - (void)toggleOverlay;
+
 - (void)setOverlayImage:(UIImage *)image;
+- (void)clearOverlayImage;
+- (UIImage *)currentImage;
+
 - (void)setOpacity:(CGFloat)opacity;
 - (CGFloat)currentOpacity;
+
+- (void)setScale:(CGFloat)scale;
+- (CGFloat)currentScale;
+
+- (void)setRotation:(CGFloat)rotation;
+- (CGFloat)currentRotation;
+
 - (void)setLocked:(BOOL)locked;
 - (void)toggleLock;
+
+- (void)setFlipHorizontal:(BOOL)flip;
+- (BOOL)flipHorizontal;
+- (void)setFlipVertical:(BOOL)flip;
+- (BOOL)flipVertical;
+
+- (void)setContentModeIndex:(NSInteger)index;
+- (NSInteger)contentModeIndex;
+
+/// 0 = match photo aspect/size, 1 = custom width × height (points).
+- (void)setSizeMode:(NSInteger)mode;
+- (NSInteger)sizeMode;
+- (CGSize)customSize;
+- (void)setCustomSize:(CGSize)size;
+- (CGSize)currentOverlaySize;
+- (CGSize)imageNativeSize;
+- (void)syncOverlaySizeAnimated:(BOOL)animated;
+
+- (void)nudgeBy:(CGPoint)delta;
+- (void)snapToAlignment:(NSInteger)alignment; /* 0 center, 1 left, 2 right, 3 top, 4 bottom */
+- (void)rotateByDegrees:(CGFloat)degrees;
+
+- (void)setShowsBorder:(BOOL)show;
+- (BOOL)showsBorder;
+- (void)setShowsGrid:(BOOL)show;
+- (BOOL)showsGrid;
+
+- (void)setPitch:(CGFloat)pitch;
+- (CGFloat)pitch;
+- (void)setYaw:(CGFloat)yaw;
+- (CGFloat)yaw;
+- (void)resetPerspective;
+
+- (void)setCropInsets:(UIEdgeInsets)insets;
+- (UIEdgeInsets)cropInsets;
+- (void)resetCrop;
+- (void)beginCropMode;
+- (void)endCropMode;
+- (BOOL)isCropModeEnabled;
+
+- (void)beginWarpMode;
+- (void)endWarpMode;
+- (void)resetWarp;
+
+- (void)beginPerspectiveMode;
+- (void)endPerspectiveMode;
+
+- (void)beginColorPickMode;
+- (void)endColorPickMode;
+
+- (void)resetTransform;
+- (void)resetAllSettings;
+
 - (void)saveCurrentState;
+
 - (void)showSettingsPanel;
 - (void)hideSettingsPanel;
-- (void)showTestAlert;
+
+- (void)presentModal:(UIViewController *)viewController;
+- (void)makeOverlayWindowKey;
+- (void)restoreKeyWindow;
+
+- (void)setMenuHidden:(BOOL)hidden;
+- (BOOL)isMenuHidden;
+
+- (void)showToast:(NSString *)text;
 
 @end

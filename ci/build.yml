@@ -1,24 +1,20 @@
+# Copy over .github/workflows/build.yml on GitHub if git push is rejected
+# (the token has no `workflows` permission).
 name: Build Overlay.dylib
 
 on:
-  push:
-    branches: [main, arena/**]
-  pull_request:
   workflow_dispatch:
-
-permissions:
-  contents: read
+  push:
+  pull_request:
 
 jobs:
   build:
     name: Build iOS Dylib
     runs-on: macos-15
-    timeout-minutes: 20
-
+    timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@v4
       - name: Setup Xcode
         run: |
           set -euo pipefail
@@ -35,24 +31,18 @@ jobs:
           fi
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
-          sudo xcodebuild -license accept 2>/dev/null || true
-
       - name: Check sources
-        run: make check
-
+        run: python3 scripts/check_objc.py
       - name: Build
         run: |
           set -euo pipefail
           export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
           make clean
           make
-          test -f Overlay.dylib
-          echo ""
+          test -s Overlay.dylib
           echo "=== Derleme Sonucu ==="
           ls -lh Overlay.dylib
           lipo -info Overlay.dylib
-          otool -hv Overlay.dylib | sed -n '1,20p'
-
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
